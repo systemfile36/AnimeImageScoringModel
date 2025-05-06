@@ -2,8 +2,9 @@ import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
 
-# I reference Microsoft CNTK Official ResNet code. See following link.
+# I reference Microsoft CNTK Official ResNet code. See following links.
 # https://github.com/microsoft/CNTK/blob/master/Examples/Image/Classification/ResNet/Python/resnet_models.py
+# https://github.com/microsoft/CNTK/blob/master/Examples/Image/Classification/ResNet/Python/TrainResNet_ImageNet_Distributed.py
 
 def conv_bn(x, num_filters, kernel_size, strides=(1,1), 
             init="he_normal", gamma_init="ones"):
@@ -73,6 +74,26 @@ def resnet_bottleneck_model(x,
     x = layers.MaxPool2D(
         pool_size=(3,3), strides=(2, 2), padding="same")(x)
     
+    # stack resnet bottleneck block via `block_repeat_list`
     for i in range(len(block_repeat_list)):
+        # apply downsample from sencond block
+        stride = (1, 1) if i == 0 else (2, 2)
         x = bottleneck_block_inc(
-            x, num_filters=num_filters_list[i + 2])
+            x, num_filters=num_filters_list[i + 2], 
+            inter_num_filters=num_filters_list[i + 2] // 4, 
+            stride2x2=stride)
+        
+        x = stack_blocks(
+            x, block_func=bottleneck_block,
+            count=block_repeat_list[i],
+            num_filters=num_filters_list[i + 2],
+            inter_num_filters=num_filters_list[i + 2] // 4
+        )
+
+    
+    if include_final_pool:
+        x = layers.AveragePooling2D(
+            pool_size=(7, 7), name="final_average_pooling"
+        )(x)
+
+    return x

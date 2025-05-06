@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 
+from .resnet_components import resnet_bottleneck_model
 
 def data_augmentation(x, 
         zoom_range: None | tuple[float, float], rotation_range: None | tuple[float, float],
