@@ -33,7 +33,8 @@ class DatasetWrapper():
         self.inputs: dict[str, list] = { 
             'image_path': data['image_path'],  
             'score_prediction': data['score_prediction']
-            }
+        } if data is not None else None
+
         self.width = width
         self.height = height
 
