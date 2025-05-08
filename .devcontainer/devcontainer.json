@@ -1,0 +1,35 @@
+{
+    "name": "Model Develop Environment",
+    "build": {
+        //Dockerfile in project root
+        "dockerfile": "../Dockerfile"
+    }, 
+    //Add GPU to dev container
+    "runArgs": [
+        "--gpus", "all"
+    ],
+    "customizations": {
+        //Setting of VS Code
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/bin/python3.11",
+                "python.analysis.extraPaths": ["/usr/lib/python3.11/dist-packages"]
+            }, 
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }, 
+    //Set remote user for VS Code
+    "remoteUser": "root",
+
+    //Set binding path manually
+    //workSpaceMount option is `--mount` parameter for Docker CLI 
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+    "workspaceFolder": "/workspace",
+
+    //Set PYTHONPATH for import
+    "containerEnv": {
+        "PYTHONPATH": "/usr/lib/python3.11/dist-packages:/workspace"
+    }
+}
