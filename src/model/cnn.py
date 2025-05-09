@@ -1,13 +1,15 @@
 import tensorflow as tf 
-from tensorflow.keras import layers, Model
+from tensorflow.keras import layers, Model, Input
 
 from src.utils import get_filename_based_logger
 
+from .layers import resnet_bottleneck_model
+
 logger = get_filename_based_logger(__file__)
 
-def create_resnet152_pretrained(input: layers.Input, trainable: bool=False):
+def create_resnet152_pretrained(input: Input, trainable: bool=False):
     """
-    Create pre-trained ResNet152 from keras.applications and return output.
+    Create pre-trained ResNet152 from keras.applications and return output layer.
 
     `include_top` is False
     """
@@ -19,9 +21,9 @@ def create_resnet152_pretrained(input: layers.Input, trainable: bool=False):
 
     # Include preprocess layer for ResNet. 
     # See https://keras.io/api/applications/resnet/#resnet152-function
-    x = layers.Lambda(
+    input = layers.Lambda(
         lambda x: tf.keras.applications.resnet.preprocess_input(tf.cast(x, tf.float32))
-    )
+    )(input)
 
     base_model = tf.keras.applications.ResNet152(
         include_top=False,
@@ -31,11 +33,12 @@ def create_resnet152_pretrained(input: layers.Input, trainable: bool=False):
     )
     base_model.trainable = trainable
 
+    # Output shape : (batch_size, 2048)
     return base_model.output
 
-def create_efficientnet_b7_pretrained(input: layers.Input, trainable: bool=False):
+def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False):
     """
-    Create per-trained EfficientNetB7 from keras.applications and return output
+    Create pre-trained EfficientNetB7 from keras.applications and return output
 
     `input.shape` should match (600, 600, 3) 
 
@@ -55,3 +58,21 @@ def create_efficientnet_b7_pretrained(input: layers.Input, trainable: bool=False
 
     return base_model.output
 
+def create_resnet152(x):
+    """
+    Create untrained ResNet152 from scratch.
+
+    `input_shape` should match (224, 224, 3)
+
+    See following link.
+    https://github.com/microsoft/CNTK/blob/master/Examples/Image/Classification/ResNet/Python/TrainResNet_ImageNet_Distributed.py
+    """
+
+    num_filters_list = [64, 128, 256, 512, 1024, 2048]
+    block_repeat_list = [2, 7, 35, 2]
+
+    x = resnet_bottleneck_model(x, num_filters_list=num_filters_list, block_repeat_list=block_repeat_list)
+
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+
+    return x
