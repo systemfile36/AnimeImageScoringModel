@@ -4,7 +4,7 @@ import datetime
 import os
 from pathlib import Path
 
-LOG_DIR_PATH = Path(__file__).resolve().parent / 'logs'
+LOG_DIR_PATH = Path(__file__).resolve().parent.parent.parent / 'logs'
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 def get_default_logger(name : str | None) -> logging.Logger:
