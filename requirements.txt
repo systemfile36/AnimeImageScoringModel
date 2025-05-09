@@ -1,6 +1,8 @@
-tensorflow>=2.17.0
+tensorflow>=2.19.0
 numpy
 scikit-learn>=1.5.0
 tqdm>=4.67.0
 pandas
 
+#install keras-hub for load pre-trained transformers model.
+keras-hub
