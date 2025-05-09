@@ -2,6 +2,10 @@ import tensorflow as tf
 from tensorflow.keras import layers
 
 from .resnet_components import resnet_bottleneck_model
+from .transformer_components import create_custom_vit
+
+# Export Transformer Layer class
+from .transformer_components import TransformerBlock, AddCLSandPositional, PatchAndProject
 
 def data_augmentation(x, 
         zoom_range: None | tuple[float, float], rotation_range: None | tuple[float, float],
