@@ -1,6 +1,7 @@
 # Export dataset wrapper classes 
 from .dataset_wrappers import DatasetWrapper
 from .dataset_wrappers import DatasetWithMetaWrapper
+from .dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper
 
 from .dataset import load_all_character_tags, load_records
 

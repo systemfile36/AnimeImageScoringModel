@@ -6,3 +6,5 @@ pandas
 
 #install keras-hub for load pre-trained transformers model.
 keras-hub
+
+pillow
