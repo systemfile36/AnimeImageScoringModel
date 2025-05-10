@@ -22,12 +22,16 @@ def create_vit_224(input: Input, output_cls: bool = False):
     Output is (batch, projection_dim) when output_cls is True
     """
 
-        # Check whether shape is match to ViT
+    logger.info(f"Create untrained ViT feature extractor...")
+
+    # Check whether shape is match to ViT
     if input.shape[1:] != (224, 224, 3): # compare without batch
         logger.error(f"Invalid Input shape : {input.shape}. It should be (224, 224, 3) for pretrained ViT")
         return None
     
     output = create_custom_vit(input, output_cls=output_cls)
+
+    logger.info(f"Output shape: {output.shape}")
 
     return output
 
@@ -38,15 +42,20 @@ def create_vit_base_patch16_224_pretrained(input: Input, trainable: bool=False):
 
     Output is (batch, num_patches + 1, projection_dim)
     """
+
+    logger.info("Create pre-trained ViT feature extractor from 'vit_base_patch16_224_imagenet21k")
+
     # Check whether shape is match to ViT
     if input.shape[1:] != (224, 224, 3): # compare without batch
         logger.error(f"Invalid Input shape : {input.shape}. It should be (224, 224, 3) for pretrained ViT")
         return None
     
-    backbone = keras_hub.models.Backbone.from_preset("vit_base_patch16_224_imagenet21k")
+    backbone = keras_hub.models.Backbone.from_preset("vit_base_patch16_224_imagenet21k", trainable=trainable)
 
     # Replace input layer by using Functional API
     output = backbone(input)
+
+    logger.info(f"Output shape: {output.shape}")
 
     return output
 
