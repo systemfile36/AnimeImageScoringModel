@@ -4,6 +4,7 @@ from typing import Callable
 
 from src.utils import get_filename_based_logger
 from src.model.layers import TransformerBlock, AddCLSandPositional
+from src.model.layers import data_augmentation
 
 logger = get_filename_based_logger(__file__)
 
@@ -118,7 +119,11 @@ def create_vit_score_reg_by_cls_model(
 
 def create_vit_meta_multitask_reg_model(
         input: Input, vit_delegate: Callable[..., any], 
-        token_dim = 768, final_ff_dim=2048, dropout_rate=0.1, transformer_count=2, **kwargs
+        token_dim = 768, final_ff_dim=2048, dropout_rate=0.1, transformer_count=2, 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        **kwargs
 ) -> Model:
     """
     Create multi-task model with metadata, 'ai_prediction`, `rating_prediction` 
@@ -142,7 +147,12 @@ def create_vit_meta_multitask_reg_model(
 
     # 1. Predict metadata from ViT CLS token.
 
-    vit_tokens = vit_delegate(input, **kwargs) #shape = (batch, N, dim)
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        vit_tokens = vit_delegate(x, **kwargs) #shape = (batch, N, dim)
+    else:
+        vit_tokens = vit_delegate(input, **kwargs) #shape = (batch, N, dim)
 
     # Extract CLS token for meta predict
     cls_token = layers.Lambda(lambda x: x[:, 0], name="cls_token")(vit_tokens)
@@ -202,6 +212,9 @@ def create_vit_meta_multitask_reg_model(
 def create_vit_meta_tag_character_multitask_reg_model(
         input: Input, vit_delegate: Callable[..., any], tag_output_dim,
         token_dim = 768, final_ff_dim=2048, dropout_rate=0.1, transformer_count=2, 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
         **kwargs
 ) -> Model:
     """
@@ -228,15 +241,21 @@ def create_vit_meta_tag_character_multitask_reg_model(
 
     # 1. Predict metadata from ViT CLS token.
 
-    vit_tokens = vit_delegate(input, **kwargs) #shape = (batch, N, dim)
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        vit_tokens = vit_delegate(x, **kwargs) #shape = (batch, N, dim)
+    else:
+        vit_tokens = vit_delegate(input, **kwargs) #shape = (batch, N, dim)
 
     # Extract CLS token for meta predict
     cls_token = layers.Lambda(lambda x: x[:, 0], name="cls_token")(vit_tokens)
 
     # Predict metadata
-    ai_logits = layers.Dense(1, activation="sigmoid", name="ai_prediction")(cls_token)
-    rating_logits = layers.Dense(3, activation="softmax", name="rating_prediction")(cls_token)
-    tag_character_logits = layers.Dense(tag_output_dim, activation="sigmoid", name="tag_prediction")(cls_token)
+    # Make sure output is tf.float32 for mixed precision
+    ai_logits = layers.Dense(1, activation="sigmoid", dtype=tf.float32, name="ai_prediction")(cls_token)
+    rating_logits = layers.Dense(3, activation="softmax", dtype=tf.float32, name="rating_prediction")(cls_token)
+    tag_character_logits = layers.Dense(tag_output_dim, activation="sigmoid", dtype=tf.float32, name="tag_prediction")(cls_token)
 
     # 2. Tokenize predicted metadata and concat with image patches
 
@@ -279,7 +298,8 @@ def create_vit_meta_tag_character_multitask_reg_model(
     x = layers.Dense(final_ff_dim, activation='relu')(pooled)
     x = layers.Dropout(dropout_rate)(x)
     
-    score_pred = layers.Dense(1, activation='linear', name="score_prediction")(x)
+    # Make sure output is tf.float32 for mixed precision
+    score_pred = layers.Dense(1, activation='linear', dtype=tf.float32, name="score_prediction")(x)
 
     model = Model(inputs=input, outputs=[
         ai_logits, rating_logits, tag_character_logits, score_pred
