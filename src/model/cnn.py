@@ -7,7 +7,7 @@ from .layers import resnet_bottleneck_model
 
 logger = get_filename_based_logger(__file__)
 
-def create_resnet152_pretrained(input: Input, trainable: bool=False):
+def create_resnet152_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
     """
     Create pre-trained ResNet152 from keras.applications and return output layer.
 
@@ -21,22 +21,22 @@ def create_resnet152_pretrained(input: Input, trainable: bool=False):
 
     # Include preprocess layer for ResNet. 
     # See https://keras.io/api/applications/resnet/#resnet152-function
-    input = layers.Lambda(
+    x = layers.Lambda(
         lambda x: tf.keras.applications.resnet.preprocess_input(tf.cast(x, tf.float32))
     )(input)
 
     base_model = tf.keras.applications.ResNet152(
         include_top=False,
-        pooling='avg',
-        input_tensor=input, 
+        pooling='avg' if pooling else None,
+        input_tensor=x, 
         weights='imagenet'
     )
     base_model.trainable = trainable
 
-    # Output shape : (batch_size, 2048)
+    # Output shape : (batch_size, 2048) or (batch_size, 7, 7, 2048)
     return base_model.output
 
-def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False):
+def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
     """
     Create pre-trained EfficientNetB7 from keras.applications and return output
 
@@ -52,13 +52,14 @@ def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False):
         include_top=False,
         weights='imagenet',
         input_tensor=input,
-        pooling='avg'
+        pooling='avg' if pooling else None
     )
     base_model.trainable = trainable
 
+    # shape: (batch, 19, 19, 2560) | 
     return base_model.output
 
-def create_resnet152(x):
+def create_resnet152(x, pooling: bool=True):
     """
     Create untrained ResNet152 from scratch.
 
@@ -71,8 +72,10 @@ def create_resnet152(x):
     num_filters_list = [64, 128, 256, 512, 1024, 2048]
     block_repeat_list = [2, 7, 35, 2]
 
+    # shape: (batch, 7, 7, 2048)
     x = resnet_bottleneck_model(x, num_filters_list=num_filters_list, block_repeat_list=block_repeat_list)
 
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    if pooling:
+        x = tf.keras.layers.GlobalAveragePooling2D()(x) # shape: (batch, 2048)
 
     return x

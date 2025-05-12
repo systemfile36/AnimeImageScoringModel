@@ -6,7 +6,7 @@ from tensorflow.keras import layers, Input, Model
 import keras_hub
 
 from src.utils import get_filename_based_logger
-from .layers import vit_model, create_custom_vit
+from .layers import create_custom_vit
 
 
 logger = get_filename_based_logger(__file__)
@@ -40,6 +40,8 @@ def create_vit_base_patch16_224_pretrained(input: Input, trainable: bool=False):
     Create pre-trained ViT feature extractor from 'vit_base_patch16_224_imagenet21k' 
     using 'keras_hub'
 
+    Input image should normalize range [0, 1]
+
     Output is (batch, num_patches + 1, projection_dim)
     """
 
@@ -50,7 +52,8 @@ def create_vit_base_patch16_224_pretrained(input: Input, trainable: bool=False):
         logger.error(f"Invalid Input shape : {input.shape}. It should be (224, 224, 3) for pretrained ViT")
         return None
     
-    backbone = keras_hub.models.Backbone.from_preset("vit_base_patch16_224_imagenet21k", trainable=trainable)
+    backbone = keras_hub.models.Backbone.from_preset("vit_base_patch16_224_imagenet21k")
+    backbone.trainable = trainable
 
     # Replace input layer by using Functional API
     output = backbone(input)
