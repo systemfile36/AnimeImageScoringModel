@@ -43,6 +43,8 @@ def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False, pooli
     `input.shape` should match (600, 600, 3) 
 
     `include_top` is False
+
+    Input image must be normalized [0, 1]
     """
 
     if input.shape[1:] != (600, 600, 3):
