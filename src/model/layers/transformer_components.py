@@ -29,8 +29,8 @@ class PatchAndProject(layers.Layer):
     def call(self, x):
         x = self.projection(x)
         batch_size = tf.shape(x)[0]
-        # Auto-infer num_pathes
-        x = tf.reshape(x, [batch_size, -1, x.shape[-1]])
+        # Auto-infer num_patches by '-1'
+        x = tf.reshape(x, [batch_size, -1, tf.shape(x)[-1]])
         return x #shape =(batch, num_patches, projection_dim)
 
 class AddCLSandPositional(layers.Layer):
@@ -87,7 +87,10 @@ class AddCLSandPositional(layers.Layer):
         #x += self.positional_embed(positions)
 
         # Add positional embedding
-        x += self.positional_embed
+        # x += self.positional_embed
+
+        # Add positional embedding. prepare for mixed precision
+        x += tf.cast(self.positional_embed, x.dtype)
 
         return x
 
@@ -132,7 +135,7 @@ class TransformerBlock(layers.Layer):
         #Self Attention block
         x = self.layer_norm_1(inputs) # PreNorm
         attention = self.attention(x, x)
-        attention = self.attention_dropout(x, training=training)
+        attention = self.attention_dropout(attention, training=training)
         x = self.attention_residual([inputs, attention])
 
         # Feed-Forward block
