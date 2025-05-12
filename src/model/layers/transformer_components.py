@@ -33,6 +33,31 @@ class PatchAndProject(layers.Layer):
         x = tf.reshape(x, [batch_size, -1, tf.shape(x)[-1]])
         return x #shape =(batch, num_patches, projection_dim)
 
+class AddPositionalOnly(layers.Layer):
+    """
+    Add learnable positional embedding only (no CLS token)
+
+    This class is used when a CLS token is not needed.
+    """
+    def __init__(self, num_patches: int, projection_dim: int, name_prefix: str = "vit", **kwargs):
+        super().__init__(**kwargs)
+        self.projection_dim = projection_dim
+        self.num_patches = num_patches
+
+        # Learnable positional embedding: shape = (1, num_patches, projection_dim)
+        self.positional_embed = self.add_weight(
+            shape=(1, num_patches, projection_dim),
+            initializer="random_normal",
+            trainable=True,
+            name=f"{name_prefix}_positional_embedding"
+        )
+
+    def call(self, x):
+        # x: (batch_size, num_patches, projection_dim)
+        # Broadcast positional embedding to batch size and add
+        return x + tf.cast(self.positional_embed, x.dtype)
+
+
 class AddCLSandPositional(layers.Layer):
     """
     Add positional embedding and CLS token

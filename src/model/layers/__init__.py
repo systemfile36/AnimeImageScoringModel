@@ -6,6 +6,7 @@ from .transformer_components import create_custom_vit
 
 # Export Transformer Layer class
 from .transformer_components import TransformerBlock, AddCLSandPositional, PatchAndProject
+from .transformer_components import AddPositionalOnly
 
 def data_augmentation(x, 
         zoom_range: None | tuple[float, float] | float, rotation_range: None | tuple[float, float] | float,
