@@ -76,7 +76,8 @@ def score_weighted_log_average_time_decay(
     weighted = score_weighted_log_average(bookmarks, views, alpha, scaler_bookmarks, scaler_views)
 
     # Get timedelta `days`
-    age_days = (datetime.now() - upload_date)
+    # operand between `datetime.date`
+    age_days = (datetime.now().date() - upload_date)
 
     # Convert datetime.timedelta to days: int
     age_days = np.array([x.days for x in age_days])

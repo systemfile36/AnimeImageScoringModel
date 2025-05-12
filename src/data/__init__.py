@@ -3,7 +3,7 @@ from .dataset_wrappers import DatasetWrapper
 from .dataset_wrappers import DatasetWithMetaWrapper
 from .dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper
 
-from .dataset import load_all_character_tags, load_records
+from .dataset import load_all_character_tags, load_records, load_all_character_tags_from_json, save_all_character_tags_as_json
 
 from .preprocessing import score_bookmarks_ratio
 from .preprocessing import score_weighted_log_average, score_weighted_log_average_scaled

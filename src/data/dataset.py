@@ -2,6 +2,7 @@ import os
 import sqlite3
 import pandas as pd
 import numpy as np
+import json
 
 IMAGE_EXTENSION = "png"
 
@@ -25,6 +26,24 @@ def load_all_character_tags(db_path: str,
 
     return [row[0] for row in rows]
 
+def load_all_character_tags_from_json(json_path: str) -> list[str]:
+    """
+    Load character_tags from json.
+
+    It's json-string contain string like `["...", "...", ...]`
+    """
+
+    with open(json_path, "r", encoding="utf-8") as fs:
+        return json.load(fs)
+
+def save_all_character_tags_as_json(character_tags: list[str], target_path: str):
+    """
+    Save character_tags as json.
+    """
+
+    with open(target_path, "w", encoding="utf-8") as fs:
+        fs.write(json.dumps(character_tags, indent=2, ensure_ascii=False))
+
 def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.DataFrame:
     """
     Load all records from database. 
@@ -42,7 +61,7 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     
     # Read all record from database by DataFrame
     df = pd.read_sql_query(f"""
-    SELECT filename, sanity_level, total_view, total_bookmarks, tags, tag_character, date 
+    SELECT filename, sanity_level, total_view, total_bookmarks, tags, tag_character, date, 
         (CASE WHEN illust_ai_type = 2 
             OR tags LIKE '%AIイラスト%' 
             OR tags LIKE '%Diffusion%' 
@@ -64,9 +83,11 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     df['date'] = pd.to_datetime(df['date']).dt.date
 
     # Rename columns. match to model output name.
-    df.rename(columns={
+    # df.rename return new instance like str.replace, ...
+    df = df.rename(columns={
         "sanity_level": "rating_prediction",
         "ai_flag": "ai_prediction",
+        "tag_character": "tag_prediction"
     })
 
     return df
