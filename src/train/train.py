@@ -79,8 +79,9 @@ def load_history_from_json(filepath: str) -> dict:
     with open(filepath, 'r', encoding="utf-8") as fs:
         return json.load(fs)
 
-def train_meta_tag_character_multitask_reg_model(
-        root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict):
+def get_project_setting(
+        root_path: str, db_path: str, aliases_path: str, project_suffix: str, config_path:str, config_dict: dict
+) -> dict:
     
     if not (os.path.exists(root_path) and os.path.isabs(root_path)):
         logger.error(f"root path must be valid absolute path: {root_path}")
@@ -139,10 +140,66 @@ def train_meta_tag_character_multitask_reg_model(
     # Config about data_augmentation
     data_augmentation = config['data_augmentation'] if 'data_augmentation' in config else None
 
+    config_save_path = os.path.join(project_path, "config_used.json")
+
+    model_json_path = os.path.join(project_path, "model_structure.json")
+
+    csv_log_path = os.path.join(project_path, "training_log.csv")
+
+    # Create checkpoint directory
+    checkpoint_path = os.path.join(project_path, "checkpoints")
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    model_artifact_path = os.path.join(project_path, f"model-mixed_precision-TF-SavedModel")
+
+    model_path = os.path.join(project_path, f"model-mixed_precision.keras")
+
+    model_json_path = os.path.join(project_path, "model_history.json")
+
+    model_history_path = os.path.join(project_path, "model_history.json")
+
+    return {
+        'db_path': db_path,
+        'aliases_path': aliases_path,
+        'config': config,
+        'project_path': project_path,
+        'width': width,
+        'height': height,
+        'learning_rate': learning_rate,
+        'batch_size': batch_size,
+        'epoch_count': epoch_count,
+        'loss_weights': loss_weights,
+        'data_augmentation': data_augmentation,
+        'config_save_path': config_save_path,
+        'model_json_path': model_json_path,
+        'csv_log_path': csv_log_path,
+        'checkpoint_path': checkpoint_path,
+        'model_history_path': model_history_path,
+        'model_artifact_path': model_artifact_path,
+        'model_path': model_path
+    }
+
+def train_meta_tag_character_multitask_reg_model(
+        root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict):
+
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
     # debug logging
     logger.debug(f"Config set : {config}")
 
-    with open(os.path.join(project_path, "config_used.json"), "w", encoding="utf-8") as fs:
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
         json.dump(config, fs, indent=4)
 
     logger.info(f"Load records from {db_path}")
@@ -223,14 +280,14 @@ def train_meta_tag_character_multitask_reg_model(
     
     # Save model structure
     model_json = model.to_json(indent=2)
-    model_json_path = os.path.join(project_path, "model_structure.json")
+    model_json_path = project_setting['model_json_path']
     with open(model_json_path, "w", encoding="utf-8") as fs:
         fs.write(model_json)
 
-    csv_log_path = os.path.join(project_path, "training_log.csv")
+    csv_log_path = project_setting['csv_log_path']
 
     # Create checkpoint directory
-    checkpoint_path = os.path.join(project_path, "checkpoints")
+    checkpoint_path = project_setting['checkpoint_path']
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
 
@@ -288,14 +345,14 @@ def train_meta_tag_character_multitask_reg_model(
     )
 
     # Save history
-    save_history_as_json(model_history, os.path.join(project_path, "model_history.json"))
+    save_history_as_json(model_history, project_setting['model_history_path'])
 
-    model_path = os.path.join(project_path, f"model-mixed_precision.keras")
+    model_path = project_setting['model_path']
 
     # Save model as keras
     model.save(model_path)
 
-    model_artifact_path = os.path.join(project_path, f"model-mixed_precision-TF-SavedModel")
+    model_artifact_path = project_setting['model_artifact_path']
 
     # Save model as TF SavedModel
     # See following link. 
@@ -323,8 +380,24 @@ def execution_example():
         }
     )
 
+def for_test():
+
+    print(get_project_setting(
+        "/data/PixivDataBookmarks", ".database/metadata_base_single_page.sqlite3", 
+        ".database/character_tags_post500_aliases.sqlite3", 'for_test_temporary', None, {
+            'image_width': 224, 'image_height': 224, 'learning_rate': 0.0003,
+            'batch_size': 64, 'epoch': 20, 'loss_weights': {
+                'score_prediction': 0.01, 'ai_prediction': 0.8, 'rating_prediction': 1.0, 
+                'tag_prediction': 1.0
+            }, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    ))
 
 if __name__ == "__main__":
     # For Test
 
-    execution_example()
+    # execution_example()
+
+    for_test()
