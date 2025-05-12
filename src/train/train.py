@@ -32,6 +32,7 @@ import src.model.cnn
 import src.data
 
 from src.model import create_vit_meta_tag_character_multitask_reg_model
+from src.model import create_cnn_meta_multitask_transformer_reg_model
 
 logger = get_filename_based_logger(__file__)
 
@@ -359,6 +360,173 @@ def train_meta_tag_character_multitask_reg_model(
     # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
     model.export(model_artifact_path)
 
+def train_meta_multitask_reg_model(        
+        root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict
+):
+    
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
+    logger.debug(f"Config set : {config}")
+
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
+        json.dump(config, fs, indent=4)
+
+    logger.info(f"Load records from {db_path}")
+
+    # Load records
+    records = load_records(root_path, db_path)
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train dataset and test dataset
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Caching scaler from train data
+    scaler_bookmarks, scaler_views = src.data.preprocessing.get_log_minmax_scaler(
+        train_records['total_bookmarks'].to_numpy(dtype=np.float32),
+        train_records['total_view'].to_numpy(dtype=np.float32)
+    )
+
+    # Score preprocessing with scaler from train dataset
+    # Prevent risk of Data Leakage!
+    train_records['score_prediction'] = src.data.preprocessing.score_weighted_log_average_time_decay_scaled(
+        train_records['total_bookmarks'].to_numpy(dtype=np.float32), 
+        train_records['total_view'].to_numpy(dtype=np.float32), 
+        train_records['date'].to_numpy(),
+        alpha=0.7, 
+        scaler_bookmarks=scaler_bookmarks, scaler_views=scaler_views
+    ) 
+
+    test_records['score_prediction'] = src.data.preprocessing.score_weighted_log_average_time_decay_scaled(
+        test_records['total_bookmarks'].to_numpy(dtype=np.float32), 
+        test_records['total_view'].to_numpy(dtype=np.float32), 
+        test_records['date'].to_numpy(),
+        alpha=0.7, 
+        scaler_bookmarks=scaler_bookmarks, scaler_views=scaler_views
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'score_prediction', 'date')
+
+    # Get tf.data.Dataset from subclass of DatasetWrapper (See `src/data/dataset_wrappers.py`)
+    train_dataset = DatasetWithMetaWrapper(
+        train_records, width=width, height=height,
+        normalize=True
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWithMetaWrapper(
+        test_records, width=width, height=height,
+        normalize=True
+    ).get_dataset(batch_size=batch_size)
+
+    # Create Input layer
+    inputs = Input(shape=(height, width, 3), dtype=tf.float32, name="image_input")
+
+    # Set augmentation flag true when `data_augmentation` config exists
+    augmentation: bool = data_augmentation is not None
+
+    model = create_cnn_meta_multitask_transformer_reg_model(
+        inputs, 
+        src.model.cnn.create_efficientnet_b7_pretrained, 
+        token_dim=768, final_ff_dim=2048, dropout_rate=0.1,
+        transformer_count=2,
+        augmentation=augmentation,
+        zoom_range=data_augmentation['zoom_range'],
+        rotation_range=data_augmentation['rotation_range'],
+        trainable=False, pooling=False
+    )
+
+    model.summary()
+
+    model_json = model.to_json(indent=2)
+    
+    with open(project_setting['model_json_path'], "w", encoding="utf-8") as fs:
+        fs.write(model_json)
+
+    csv_log_path = project_setting['csv_log_path']
+
+    # Create checkpoint directory
+    checkpoint_path = project_setting['checkpoint_path']
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+
+    callbacks = [
+        # Set EarlyStopping. 
+        # Monitor loss. stop training when no improvement in 5 epochs.
+        EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+
+        # Save best model has most low loss.
+        ModelCheckpoint(filepath=os.path.join(checkpoint_path, "best_model.keras"),
+                        monitor="val_loss", mode="min", save_best_only=True, save_weights_only=False, verbose=1),
+        
+        CSVLogger(csv_log_path)
+    ]
+
+    model.compile(
+        # Use optimizer 'Adam'
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+        loss={
+            # ai_prediction is "sigmoid". binary classification.
+            "ai_prediction": "binary_crossentropy",
+            # rating_prediction is "softmax". single-label classification. (one-hot vector based)
+            "rating_prediction": "categorical_crossentropy",
+            # score_prediction is "linear". regression.
+            "score_prediction": "mse"
+        }, 
+        # weights of loss for multi-task model.
+        # extract manually to avoid risk of error.
+        loss_weights={
+            "ai_prediction": loss_weights['ai_prediction'],
+            "rating_prediction": loss_weights['rating_prediction'],
+            "score_prediction": loss_weights['score_prediction']
+        }, 
+        metrics={
+            "ai_prediction": [
+                tf.keras.metrics.BinaryAccuracy(name="ai_acc"),
+                tf.keras.metrics.Precision(name="ai_precision"),
+                tf.keras.metrics.Recall(name="ai_recall")
+            ],
+            "rating_prediction": [tf.keras.metrics.CategoricalAccuracy(name="rating_acc")],
+            "score_prediction": [tf.keras.metrics.MeanAbsoluteError(name="score_mae")]
+        }
+    )
+
+    # Start training.
+    model_history = model.fit(
+        train_dataset,
+        validation_data=test_dataset,
+        epochs=epoch_count, 
+        callbacks=callbacks, 
+        verbose=1
+    )
+
+    # Save history
+    save_history_as_json(model_history, project_setting['model_history_path'])
+
+    # Save model as keras
+    model.save(project_setting['model_path'])
+
+    model_artifact_path = project_setting['model_artifact_path']
+
+    # Save model as TF SavedModel
+    # See following link. 
+    # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
+    model.export(model_artifact_path)
 
 def execution_example():
     """
@@ -374,6 +542,23 @@ def execution_example():
             'batch_size': 64, 'epoch': 20, 'loss_weights': {
                 'score_prediction': 0.01, 'ai_prediction': 0.8, 'rating_prediction': 1.0, 
                 'tag_prediction': 1.0
+            }, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
+def execution_example_v2():
+    """
+    Function for experiment
+    """
+
+    train_meta_multitask_reg_model(
+        "/data/PixivDataBookmarks", ".database/metadata_base_sample_ai_flag.sqlite3", 
+        "", '3rd_experiment_efnb7_based', None, {
+            'image_width': 600, 'image_height': 600, 'learning_rate': 0.0003,
+            'batch_size': 64, 'epoch': 28, 'loss_weights': {
+                'score_prediction': 0.01, 'ai_prediction': 1.0, 'rating_prediction': 1.0,
             }, 'data_augmentation': {
                 "zoom_range": 0.15, "rotation_range": 0.2
             }
@@ -399,5 +584,4 @@ if __name__ == "__main__":
     # For Test
 
     # execution_example()
-
-    for_test()
+    execution_example_v2()
