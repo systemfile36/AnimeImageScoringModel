@@ -8,7 +8,7 @@ from .transformer_components import create_custom_vit
 from .transformer_components import TransformerBlock, AddCLSandPositional, PatchAndProject
 
 def data_augmentation(x, 
-        zoom_range: None | tuple[float, float], rotation_range: None | tuple[float, float],
+        zoom_range: None | tuple[float, float] | float, rotation_range: None | tuple[float, float] | float,
         flip: None | str = "horizontal",
         seed: int = 42
     ):
