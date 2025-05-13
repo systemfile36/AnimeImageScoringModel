@@ -156,8 +156,6 @@ def get_project_setting(
 
     model_path = os.path.join(project_path, f"model-mixed_precision.keras")
 
-    model_json_path = os.path.join(project_path, "model_history.json")
-
     model_history_path = os.path.join(project_path, "model_history.json")
 
     return {
