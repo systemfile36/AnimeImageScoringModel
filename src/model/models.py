@@ -38,6 +38,46 @@ def create_cnn_score_reg_model(
     
     return model
 
+def create_cnn_score_classification_model(
+        input: Input, cnn_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        **kwargs
+) -> Model:
+    """
+    Create simple score classification model based given CNN backbone
+
+    Dataset shape must be 
+    
+    ```
+    (image, 
+        {'score_prediction': "int or float32"}
+    )
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `cnn_delegate`.
+    """
+
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        image_feature = cnn_delegate(x, **kwargs)
+    else:
+        image_feature = cnn_delegate(input, **kwargs)
+
+    # Add classification output
+    # Make sure output is tf.float32 for mixed precision
+    score_pred = layers.Dense(100, activation="softmax", name='score_prediction', dtype=tf.float32)(image_feature)
+
+    # Set output name manually to avoid error
+    model = Model(inputs=input, outputs={ "score_prediction": score_pred })
+
+    return model
+
 def create_cnn_meta_multitask_reg_model(
         input: Input, cnn_delegate: Callable[..., any], **kwargs
 ) -> Model:
@@ -113,7 +153,7 @@ def create_vit_score_reg_by_cls_model(
     # Score regression output
     score_pred = layers.Dense(1, activation='linear', name="score_prediction")(x)
 
-    model = Model(inputs=input, outputs=score_pred)
+    model = Model(inputs=input, outputs=[score_pred])
 
     return model
 
