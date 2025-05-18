@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from typing import Callable
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, QuantileTransformer
 
 import src.model.layers
 
@@ -24,7 +24,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping
 
 from src.data.dataset import load_all_character_tags, load_records
 from src.data.dataset import load_all_character_tags_from_json, save_all_character_tags_as_json
-from src.data.dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper, DatasetWithMetaWrapper, DatasetWrapper
+from src.data.dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper, DatasetWithMetaWrapper, DatasetWrapper, DatasetWrapperForScoreClassification
 from src.utils import get_filename_based_logger
 
 import src.model.vit
@@ -33,6 +33,7 @@ import src.data
 
 from src.model import create_vit_meta_tag_character_multitask_reg_model
 from src.model import create_cnn_meta_multitask_transformer_reg_model
+from src.model import create_cnn_score_classification_model
 
 logger = get_filename_based_logger(__file__)
 
@@ -136,7 +137,7 @@ def get_project_setting(
     batch_size = config['batch_size']
     epoch_count = config['epoch']
 
-    loss_weights = config['loss_weights']
+    loss_weights = config['loss_weights'] if 'loss_weights' in config else None
 
     # Config about data_augmentation
     data_augmentation = config['data_augmentation'] if 'data_augmentation' in config else None
@@ -526,6 +527,183 @@ def train_meta_multitask_reg_model(
     # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
     model.export(model_artifact_path)
 
+def train_score_classification_model(
+        root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict
+):
+    
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    project_path = project_setting['project_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
+    logger.debug(f"Config set : {config}")
+
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
+        json.dump(config, fs, indent=4)
+
+    logger.info(f"Load records from {db_path}")
+
+    # Load records
+    records = load_records(root_path, db_path)
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train and test
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Caching quantile_transformer from train data
+    quantile_bookmarks, quantile_views, quantile_ctr = src.data.preprocessing.get_log_quantile_transformer(
+        train_records['total_bookmarks'].to_numpy(dtype=np.float32),
+        train_records['total_view'].to_numpy(dtype=np.float32)
+    )
+
+    # Score preprocessing with quantile transformer from train dataset
+    # Prevent risk of Data Leakage!
+    train_records['score_prediction'] = src.data.preprocessing.score_weighted_ctr_log_quantile_time_decay_scaled(
+        train_records['total_bookmarks'].to_numpy(dtype=np.float32),
+        train_records['total_view'].to_numpy(dtype=np.float32),
+        train_records['date'].to_numpy(),
+        alpha=0.6, beta=0.2, gamma=0.2,
+        qt_bookmarks=quantile_bookmarks,
+        qt_views=quantile_views,
+        qt_ctr=quantile_ctr, 
+        n_quantities=10000,
+        time_decay_method="sqrt"
+    )
+
+    test_records['score_prediction'] = src.data.preprocessing.score_weighted_ctr_log_quantile_time_decay_scaled(
+        test_records['total_bookmarks'].to_numpy(dtype=np.float32),
+        test_records['total_view'].to_numpy(dtype=np.float32),
+        test_records['date'].to_numpy(),
+        alpha=0.6, beta=0.2, gamma=0.2,
+        qt_bookmarks=quantile_bookmarks, # reuse QuantileTransformer
+        qt_views=quantile_views, # reuse QuantileTransformer
+        qt_ctr=quantile_ctr, 
+        n_quantities=10000,
+        time_decay_method="sqrt", 
+        time_decay_lambda=0.2
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'score_prediction')
+
+    # Export test records for debug and statistics
+    test_records.to_csv(os.path.join(project_path, "test_records.csv"))
+
+    # Get tf.data.Dataset
+    train_dataset = DatasetWrapperForScoreClassification(
+        train_records, width=width, height=height,
+        num_classes = 100, normalize=True
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWrapperForScoreClassification(
+        test_records, width=width, height=height,
+        num_classes = 100, normalize=True
+    ).get_dataset(batch_size=batch_size)
+
+    # Create Input layer
+    inputs = Input(shape=(height, width, 3), dtype=tf.float32, name="image_input")
+
+    augmentation: bool = data_augmentation is not None
+
+    model = create_cnn_score_classification_model(
+        inputs, 
+        src.model.cnn.create_resnet152,
+        augmentation=augmentation,
+        zoom_range=data_augmentation['zoom_range'],
+        rotation_range=data_augmentation['rotation_range'],
+        pooling=True # pooling is true because output is flat dense
+    )
+
+    model.summary()
+
+    model_json = model.to_json(indent=2)
+
+    with open(project_setting['model_json_path'], "w", encoding='utf-8') as fs:
+        fs.write(model_json)
+
+    csv_log_path = project_setting['csv_log_path']
+
+    # Create checkpoint directory
+    checkpoint_path = project_setting['checkpoint_path']
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    callbacks = [
+        # Set EarlyStopping. 
+        # Monitor loss. stop training when no improvement in 5 epochs.
+        EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+
+        # Save model for each epoch
+        ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                        monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+        
+        CSVLogger(csv_log_path)
+    ]
+
+    model.compile(
+        # Use optimizer 'Adam'
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+        loss={
+            # Use 'categorical_crossentropy' for stable train
+            "score_prediction": "categorical_crossentropy"
+        }, 
+        metrics={
+            # Use custom MAE function for metric
+            "score_prediction": [expected_mae]
+        }
+    )
+
+    model_history = model.fit(
+        train_dataset, 
+        validation_data=test_dataset,
+        epochs=epoch_count,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    save_history_as_json(model_history, project_setting['model_history_path'])
+
+    # Save model as keras
+    model.save(project_setting['model_path'])
+
+    model_artifact_path = project_setting['model_artifact_path']
+
+    # Save model as TF SavedModel
+    # See following link. 
+    # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
+    model.export(model_artifact_path)
+
+def expected_mae(y_true, y_pred):
+    """
+    Compute MAE from expected score of softmax output
+    """
+    # y_pred is softmax, y_true is soft label
+    
+    # Get length of softmax output vector
+    num_classes = tf.shape(y_pred)[-1]
+
+    # Get Class index tensor like [1.0, 2.0, 3.0, 4.0, ......]
+    class_indices = tf.cast(tf.range(1, num_classes + 1), tf.float32)
+
+    true_score = tf.reduce_sum(y_true * class_indices, axis=-1)
+    pred_score = tf.reduce_sum(y_pred * class_indices, axis=-1)
+
+    # Compute MAE
+    return tf.reduce_mean(tf.abs(true_score - pred_score))
+
 def execution_example():
     """
     Example of running train function. 
@@ -563,6 +741,21 @@ def execution_example_v2():
         }
     )
 
+def excution_example_v3():
+    """
+    Function for experiment
+    """
+
+    train_score_classification_model(
+        "/data/PixivDataBookmarks", ".database/metadata_base_only_original.sqlite3",
+        "", "4th_experiment_cnn_based_score_classification", None, {
+            'image_width': 224, 'image_height': 224, 'learning_rate': 0.001,
+            'batch_size': 32, 'epoch': 28, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -582,4 +775,5 @@ if __name__ == "__main__":
     # For Test
 
     # execution_example()
-    execution_example_v2()
+    # execution_example_v2()
+    excution_example_v3()
