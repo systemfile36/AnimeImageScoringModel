@@ -60,7 +60,7 @@ def bottleneck_block_inc(x, num_filters, inter_num_filters,
 
     shortcut = conv_bn(x, num_filters, (1, 1), strides=stride)
 
-    p = layers.Add()([c3 + shortcut])
+    p = layers.Add()([c3, shortcut])
 
     return layers.Activation("relu")(p)
 
