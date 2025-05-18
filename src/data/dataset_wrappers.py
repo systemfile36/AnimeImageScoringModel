@@ -117,6 +117,100 @@ class DatasetWrapper():
     def map_labels_py(self, data_slice):
         pass
 
+class DatasetWrapperForScoreClassification(DatasetWrapper):
+    """
+    DatasetWrapper class for Score classification
+
+    This class using for score prediction by classification
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'score_prediction': "(N,), Soft label vector. N is num_classes"
+        })
+    ```
+        
+    The input data shuold have the shape 
+    ({
+        'image_path': "str, absolute path to image",
+        'score_prediction': "float32"
+    })
+
+    """
+
+    def __init__(
+            self, data: dict,
+            width: int, height: int, num_classes: int = 100, normalize: bool=True
+    ):
+        """
+        The argument 'data' must contain the keys 'image_path' and 'score_prediction'
+        """
+
+        # Create dictionary from argument
+        self.inputs: dict[str, list] = { 
+            'image_path': data['image_path'],  
+            'score_prediction': data['score_prediction']
+        } if data is not None else None
+
+        self.width = width
+        self.height = height
+
+        self.num_classes = num_classes
+
+        self.normalize = normalize
+
+    def load_image_for_map(self, data_slice):
+        
+        image = self.load_image(data_slice['image_path'])
+        
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, 
+                data_slice['score_prediction'])
+    
+    def map_labels(self, image, score_value):
+        image, score_vector = tf.py_function(
+            self.map_labels_py,
+            (image, score_value),
+            (tf.float32, tf.float32)
+        )
+
+        # Set shape for safety
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+        score_vector.set_shape([self.num_classes]) # (N,), soft label vector
+
+        # packing to dict again
+        return (image, {
+            'score_prediction': score_vector
+        })
+
+    def map_labels_py(self, image, score_value):
+        
+        # Convert score to soft label vector 
+        # (num_classes,) like [0, 0, ..., 0.4, 0.6, ...]
+        score = self.score_to_soft_label(score_value, self.num_classes)
+
+        return (image, score)
+
+    def score_to_soft_label(self, score, num_classes: int = 100) -> np.ndarray:
+        """
+        Convert a float score (1~100) to a soft label (length = num_classes)
+        using linear interpolation.
+        """
+        score = np.clip(score, 1.0, num_classes)
+        floor = int(np.floor(score))
+        ceil = min(floor + 1, num_classes)
+        label = np.zeros(num_classes).astype(np.float32)
+
+        delta = score - floor
+        label[floor - 1] = 1.0 - delta
+        if ceil <= num_classes:
+            label[ceil - 1] = delta
+
+        return label
+        
+        
+
 class DatasetWithMetaWrapper(DatasetWrapper):
     """
     DatasetWrapper class for dataset with metadata. 
