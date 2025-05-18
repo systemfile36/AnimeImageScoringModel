@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, QuantileTransformer
 from datetime import datetime
 
 def score_weighted_log_average_scaled(
@@ -24,6 +24,27 @@ def get_log_minmax_scaler(bookmarks: np.ndarray, views: np.ndarray) -> tuple[Min
     return (
         MinMaxScaler().fit(np.log1p(bookmarks).reshape(-1, 1)),
         MinMaxScaler().fit(np.log1p(views).reshape(-1, 1))
+    )
+
+def get_log_quantile_transformer(
+        bookmarks: np.ndarray, views: np.ndarray, n_quantities: int = 10000
+) -> tuple[QuantileTransformer, QuantileTransformer, QuantileTransformer]:
+    """
+    Get QuantileTranformer of log(1+x) bookmarks and views and CTR (bookmarks/(views + epsilon))
+    """
+
+    # log(1 + x)
+    log_bookmarks = np.log1p(bookmarks)
+    log_views = np.log1p(views)
+
+    # bookmarks views ratio
+    ctr = bookmarks / (views + 1e-5)
+    log_ctr = np.log1p(ctr)
+
+    return (
+        QuantileTransformer(n_quantiles=n_quantities, output_distribution="uniform").fit(log_bookmarks.reshape(-1, 1)),
+        QuantileTransformer(n_quantiles=n_quantities, output_distribution="uniform").fit(log_views.reshape(-1, 1)),
+        QuantileTransformer(n_quantiles=n_quantities, output_distribution="uniform").fit(log_ctr.reshape(-1, 1))
     )
 
 def score_weighted_log_average(
@@ -105,5 +126,87 @@ def score_weighted_log_average_time_decay_scaled(
 
     # Scale to range 1 ~ 100
     score = (weighted - weighted.min()) / (weighted.max() - weighted.min()) * 99 + 1
+
+    return score
+
+def score_weighted_ctr_log_quantile_time_decay_scaled(
+        bookmarks: np.ndarray, views: np.ndarray, upload_date: np.ndarray,
+        alpha: float = 0.6, beta: float = 0.2, gamma: float = 0.2,
+        qt_bookmarks: QuantileTransformer | None = None,
+        qt_views: QuantileTransformer | None = None,
+        qt_ctr: QuantileTransformer | None = None,
+        n_quantities: int = 10000,
+        time_decay_method: str = "sqrt",  # ["sqrt", "log", "logistic"]
+        time_decay_lambda: float = 0.2
+) -> np.ndarray:
+    """
+    Compute weighted score from bookmarks, views, and CTR with time decay and quantile normalization.
+
+    Components:
+        - log(1 + x) transform
+        - Quantile normalization (normal or uniform)
+        - weighted average: alpha * bookmarks + beta * views + gamma * CTR
+        - time decay:
+            - sqrt:        1 / sqrt(1 + days)
+            - log:         1 / log(1 + days)
+            - logistic:    1 / (1 + exp(β * (days - t0))) [Not implemented yet]
+
+    Parameters:
+        - bookmarks: raw bookmark counts (N,)
+        - views: raw view counts (N,)
+        - upload_date: np.ndarray of datetime.date (N,)
+        - alpha, beta, gamma: weight for bookmarks, views, ctr
+        - qt_*: pretrained QuantileTransformer (or None to fit on given data)
+        - n_quantities: `n_quantities` of QuantileTransformer. Default is 10000
+        - time_decay_method: time decay function selector
+        - time_decay_lambda: weight to time decay. score = score * (1 - lambda) + lambda * decay)
+
+    Returns:
+        - final_score: scaled score in range 1 ~ 100 (np.ndarray)
+    """
+
+    # log(1 + x)
+    log_bookmarks = np.log1p(bookmarks)
+    log_views = np.log1p(views)
+    ctr = bookmarks / (views + 1e-5)
+    log_ctr = np.log1p(ctr)
+
+    # Quantile normalization
+    if qt_bookmarks is None:
+        qt_bookmarks = QuantileTransformer(n_quantiles=n_quantities, output_distribution='uniform').fit(log_bookmarks.reshape(-1, 1))
+    if qt_views is None:
+        qt_views = QuantileTransformer(n_quantiles=n_quantities, output_distribution='uniform').fit(log_views.reshape(-1, 1))
+    if qt_ctr is None:
+        qt_ctr = QuantileTransformer(n_quantiles=n_quantities, output_distribution='uniform').fit(log_ctr.reshape(-1, 1))
+
+    norm_bookmarks = qt_bookmarks.transform(log_bookmarks.reshape(-1, 1)).flatten()
+    norm_views = qt_views.transform(log_views.reshape(-1, 1)).flatten()
+    norm_ctr = qt_ctr.transform(log_ctr.reshape(-1, 1)).flatten()
+
+    # Weighted combination
+    combined = alpha * norm_bookmarks + beta * norm_views + gamma * norm_ctr
+
+    # Time decay
+    age_days = (datetime.now().date() - upload_date)
+    age_days = np.array([x.days for x in age_days])
+
+    age_days = np.clip(age_days, 1, None)
+
+    if time_decay_method == "sqrt":
+        decay = 1 / np.sqrt(1 + age_days)
+    elif time_decay_method == "log":
+        decay = 1 / np.log1p(age_days)
+    else:
+        raise ValueError("Unsupported time_decay_method. Use 'sqrt' or 'log'.")
+
+    # Apply decay
+    # decayed = combined * decay
+
+    # Apply decay
+    # Apply weight to time decay to reduce influence
+    decayed = combined * ((1 - time_decay_lambda) + time_decay_lambda * decay)
+
+    # Scale to range 1 ~ 100
+    score = (decayed - decayed.min()) / (decayed.max() - decayed.min()) * 99 + 1
 
     return score
