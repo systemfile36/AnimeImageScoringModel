@@ -69,10 +69,25 @@ def create_cnn_score_classification_model(
     else:
         image_feature = cnn_delegate(input, **kwargs)
 
+	# Add FFN layer and Dropout
+    ffn = layers.Dense(512, activation='relu', name="final_ffn")(image_feature)
+    ffn = layers.Dropout(0.3, name="final_dropout")(ffn)
+
     # Add classification output
     # Make sure output is tf.float32 for mixed precision
-    score_pred = layers.Dense(100, activation="softmax", name='score_prediction', dtype=tf.float32)(image_feature)
+    #score_pred = layers.Dense(100, activation="softmax", name='score_prediction', dtype=tf.float32)(ffn)
+	
+    score_pred_pre = layers.Dense(100)(ffn)
 
+	# Wrapper of clip logits
+    # def clip_logits(x):
+    #     return tf.clip_by_value(x, -20.0, 20.0)
+	
+	# # Cliping logits for safety
+    # logit_cliping = layers.Lambda(clip_logits)(score_pred_pre)
+
+    score_pred = layers.Softmax(name="score_prediction", dtype=tf.float32)(score_pred_pre)
+	
     # Set output name manually to avoid error
     model = Model(inputs=input, outputs={ "score_prediction": score_pred })
 
