@@ -20,7 +20,7 @@ from tensorflow.keras import mixed_precision
 # https://www.tensorflow.org/guide/mixed_precision?_gl=1*15fhogz*_up*MQ..*_ga*OTA1MzU2MTMxLjE3NDY5ODc0MzA.*_ga_W0YLR4190T*czE3NDY5ODc0MzAkbzEkZzAkdDE3NDY5ODc0MzAkajAkbDAkaDA.
 mixed_precision.set_global_policy("mixed_float16")
 
-from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping
+from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping, TerminateOnNaN
 
 from src.data.dataset import load_all_character_tags, load_records
 from src.data.dataset import load_all_character_tags_from_json, save_all_character_tags_as_json
@@ -650,7 +650,10 @@ def train_score_classification_model(
         ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
                         monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
         
-        CSVLogger(csv_log_path)
+        CSVLogger(csv_log_path),
+		
+		# Terminate when loss or metric is NaN for safety
+		TerminateOnNaN()
     ]
 
     model.compile(
@@ -691,7 +694,9 @@ def expected_mae(y_true, y_pred):
     Compute MAE from expected score of softmax output
     """
     # y_pred is softmax, y_true is soft label
-    
+  	# Replace NaNs to 0 for safety 
+	y_pred = tf.where(tf.math.is_nan(y_pred), tf.zeros_like(y_pred, dtype=tf.float32), y_pred)
+ 
     # Get length of softmax output vector
     num_classes = tf.shape(y_pred)[-1]
 
