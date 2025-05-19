@@ -482,3 +482,88 @@ def create_vit_meta_tag_character_multitask_reg_model(
 
     return model
 
+def create_cnn_rating_classification_model(
+        input: Input, cnn_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        **kwargs
+) -> Model:
+    """
+    Create simple rating classification model based given CNN backbone
+
+    Dataset shape must be 
+
+    ```
+    (image, {
+        'rating_prediction': "0 or 1, if R-18 then 1 else 0, float32", 
+    })
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `vit_delegate`.
+    """
+
+
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        image_feature = cnn_delegate(x, **kwargs)
+    else:
+        image_feature = cnn_delegate(input, **kwargs)
+
+    # Add FFN layer and Dropout
+    ffn = layers.Dense(512, activation='relu', name="final_ffn")(image_feature)
+    ffn = layers.Dropout(0.3, name="final_dropout")(ffn)
+
+    rating_pred = layers.Dense(1, activation="sigmoid", name="rating_prediction", dtype=tf.float32)(ffn)
+
+    model = Model(inputs=input, outputs={ "rating_prediction": rating_pred })
+
+    return model
+
+def create_vit_rating_classification_model(
+        input: Input, vit_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        **kwargs
+) -> Model:
+    """
+    Create simple rating classification model based given ViT backbone
+
+    Dataset shape must be 
+
+    ```
+    (image, {
+        'rating_prediction': "0 or 1, if R-18 then 1 else 0, float32", 
+    })
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `vit_delegate`.
+    """
+
+
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        vit_tokens = vit_delegate(x, **kwargs)
+    else:
+        vit_tokens = vit_delegate(input, **kwargs)
+
+    cls_token = layers.Lambda(lambda x: x[:, 0], name="extract_cls_token")(vit_tokens)
+
+    # Add FFN layer and Dropout
+    ffn = layers.Dense(512, activation='relu', name="final_ffn")(cls_token)
+    ffn = layers.Dropout(0.3, name="final_dropout")(ffn)
+
+    rating_pred = layers.Dense(1, activation="sigmoid", name="rating_prediction", dtype=tf.float32)(ffn)
+
+    model = Model(inputs=input, outputs={ "rating_prediction": rating_pred })
+
+    return model
