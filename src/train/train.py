@@ -620,10 +620,12 @@ def train_score_classification_model(
 
     model = create_cnn_score_classification_model(
         inputs, 
-        src.model.cnn.create_resnet152,
+        #src.model.cnn.create_resnet152,
+        src.model.cnn.create_resnet152_pretrained, # Use pre-trained for fine-tuning
         augmentation=augmentation,
         zoom_range=data_augmentation['zoom_range'],
         rotation_range=data_augmentation['rotation_range'],
+        trainable=False, # Freeze feature extractor for fine-tuning
         pooling=True # pooling is true because output is flat dense
     )
 
@@ -689,13 +691,103 @@ def train_score_classification_model(
     # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
     model.export(model_artifact_path)
 
+    fine_tuning_resnet152_based_model(
+        project_setting=project_setting,
+        model=model,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
+        loss={
+            # Use 'categorical_crossentropy' for stable train
+            "score_prediction": "categorical_crossentropy"
+        },
+        metrics={
+            # Use custom MAE function for metric
+            "score_prediction": [expected_mae]
+        },
+        epoch=10,
+        fine_tune_suffix="fine_tune_1",
+        unfreeze_boundary_name="conv5_block2",
+        new_learning_rate=1e-5
+    )
+
+def fine_tuning_resnet152_based_model(
+        project_setting, model: Model, 
+        train_dataset, test_dataset,
+        loss, metrics, epoch, 
+        fine_tune_suffix="fine_tune_0",
+        unfreeze_boundary_name="conv5_block2",
+        new_learning_rate = 1e-5):
+    """
+    Second step of fine-tuning pre-trained ResNet152 model. 
+
+    Use same project_setting and Model instance, loss, metrics to first step.
+
+    You can specify learning_rate. Default is 1e-5
+    """
+
+    # Unfreeze all layers
+    model.trainable = True
+
+    # Freeze all layers before the layer contain `unfreeze_boundary_name` in name
+    set_trainable = False
+    for layer in model.layers:
+        if unfreeze_boundary_name in layer.name:
+            set_trainable = True
+
+        layer.trainable = set_trainable
+
+    checkpoint_path = os.path.join(project_setting['project_path'], f"checkpoint_{fine_tune_suffix}")
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    csv_log_path = os.path.join(project_setting['project_path'], f"training_log_{fine_tune_suffix}.csv")
+
+    callbacks = [
+        # Set EarlyStopping. 
+        # Monitor loss. stop training when no improvement in 5 epochs.
+        EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+
+                # Save model for each epoch
+        ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                        monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+
+        CSVLogger(csv_log_path),
+		
+		# Terminate when loss or metric is NaN for safety
+		TerminateOnNaN()
+    ]
+
+    # Compile again with new leaning rate and unfreeze model
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=new_learning_rate),
+        loss=loss,
+        metrics=metrics
+    )
+
+    model_history = model.fit(
+        train_dataset,
+        validation_data=test_dataset,
+        epochs=epoch,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    # Save fine-tuned model
+    model_path = os.path.join(project_setting['projet_path'], f"model-mixed_precision_{fine_tune_suffix}.keras")
+
+    model.save(model_path)
+
+    model_artifact_path = os.path.join(project_setting['project_path'], f"model-mixed_precision-TF-SavedModel_{fine_tune_suffix}")
+
+    model.export(model_artifact_path)
+
 def expected_mae(y_true, y_pred):
     """
     Compute MAE from expected score of softmax output
     """
     # y_pred is softmax, y_true is soft label
   	# Replace NaNs to 0 for safety 
-	y_pred = tf.where(tf.math.is_nan(y_pred), tf.zeros_like(y_pred, dtype=tf.float32), y_pred)
+    y_pred = tf.where(tf.math.is_nan(y_pred), tf.zeros_like(y_pred, dtype=tf.float32), y_pred)
  
     # Get length of softmax output vector
     num_classes = tf.shape(y_pred)[-1]
@@ -761,6 +853,21 @@ def excution_example_v3():
         }
     )
 
+def execution_example_v4():
+    """
+    Function for experiment '4th_experiment_pre-trained_resnet_based_score_classification'
+    """
+
+    train_score_classification_model(
+        "/data/PixivDataBookmarks", ".database/metadata_base_only_original_without_r-18_ai.sqlite3",
+        "", "4th_experiment_pre-trained_resnet_based_score_classification", None, {
+            'image_width': 224, 'image_height': 224, 'learning_rate': 0.001,
+            'batch_size': 32, 'epoch': 28, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -781,4 +888,5 @@ if __name__ == "__main__":
 
     # execution_example()
     # execution_example_v2()
-    excution_example_v3()
+    # excution_example_v3()
+    execution_example_v4()
