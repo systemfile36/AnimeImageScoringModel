@@ -209,7 +209,67 @@ class DatasetWrapperForScoreClassification(DatasetWrapper):
 
         return label
         
+class DatasetWrapperForRatingClassification(DatasetWrapper):
+    """
+    DatasetWrapper class for dataset with metadata. 
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'rating_prediction': "0 or 1. if 'R-18' then 1 else 0"
+        })
+    ```
         
+    The input data shuold have the shape 
+    ({
+        'image_path': "str, absolute path to image",
+        'rating_prediction': "string, R-18 or other"
+    })
+
+    """
+    def __init__(
+            self, data: dict,
+            width: int, height: int, num_classes: int = 100, normalize: bool=True
+    ):  
+        super().__init__(None, width, height, normalize)
+
+        self.inputs = {
+            'image_path': data['image_path'],
+            'rating_prediction': data['rating_prediction']
+        }
+
+    def load_image_for_map(self, data_slice):
+
+        image = self.load_image(data_slice['image_path'])
+
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, data_slice['rating_prediction'])
+    
+    def map_labels(self, image, rating_value):
+        image, rating_vector = tf.py_function(
+            self.map_labels_py,
+            (image, rating_value),
+            (tf.float32, tf.float32)
+        )
+
+        rating_vector.set_shape([1]) # just float32
+
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+
+        return (image, {
+            'rating_prediction': rating_vector
+        })
+
+    def map_labels_py(self, image, rating_value):
+        
+        rating_vector = 1.0 if rating_value == 'R-18' else 0.0
+
+        rating_vector = np.array([rating_vector]).astype(np.float32)
+
+        return (image, rating_vector)
+
+
 
 class DatasetWithMetaWrapper(DatasetWrapper):
     """

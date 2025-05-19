@@ -61,7 +61,7 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     
     # Read all record from database by DataFrame
     df = pd.read_sql_query(f"""
-    SELECT filename, sanity_level, total_view, total_bookmarks, tags, tag_character, date, 
+    SELECT filename, sanity_level, total_view, total_bookmarks, tags, tag_character, date, rating,
         (CASE WHEN illust_ai_type = 2 
             OR tags LIKE '%AIイラスト%' 
             OR tags LIKE '%Diffusion%' 
@@ -85,7 +85,8 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     # Rename columns. match to model output name.
     # df.rename return new instance like str.replace, ...
     df = df.rename(columns={
-        "sanity_level": "rating_prediction",
+        #"sanity_level": "rating_prediction",
+        "rating": "rating_prediction",
         "ai_flag": "ai_prediction",
         "tag_character": "tag_prediction"
     })
