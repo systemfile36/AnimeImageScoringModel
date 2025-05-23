@@ -45,8 +45,6 @@ def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False, pooli
     Image input should be float32 [0, 255]
 
     `include_top` is False
-
-    Input image must be normalized [0, 1]
     """
 
     if input.shape[1:] != (600, 600, 3):
@@ -62,6 +60,32 @@ def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False, pooli
 
     # shape: (batch, 19, 19, 2560) | 
     return base_model.output
+
+def create_efficientNet_b4_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
+    """
+    Create pre-trained EfficientNetB7 from keras.applications and return output
+
+    `input.shape` should match (380, 380, 3) 
+
+    Image input should be float32 [0, 255]
+
+    `include_top` is False
+    """
+
+    if input.shape[1:] != (600, 600, 3):
+        logger.error(f"Invalid Input shape : {input.shape}. It should be (600, 600, 3) for pre-trained EfficientNetB4")
+
+    base_model = tf.keras.applications.EfficientNetB4(
+        include_top=False,
+        weights='imagenet',
+        input_tensor=input,
+        pooling='avg' if pooling else None
+    )
+    base_model.trainable = trainable
+
+    # shape: (batch, 19, 19, 2560) | 
+    return base_model.output
+
 
 def create_resnet152(x, pooling: bool=True):
     """
