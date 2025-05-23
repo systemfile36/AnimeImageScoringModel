@@ -105,9 +105,10 @@ class DatasetWrapper():
             method=tf.image.ResizeMethod.AREA
         )
 
-        # normalize to [0, 1) by convert to tf.float32
+        # Convert dtype of image to tf.float32 and normalize.
         if self.normalize:
-            image = tf.image.convert_image_dtype(image, tf.float32)
+            image = tf.cast(image, dtype=tf.float32)
+            image = image / 255.0
 
         return image
 
