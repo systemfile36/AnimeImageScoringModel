@@ -719,7 +719,7 @@ def fine_tuning_pre_trained_based_model(
         unfreeze_boundary_name="conv5_block2",
         new_learning_rate = 1e-5):
     """
-    Second step of fine-tuning pre-trained ResNet152 model. 
+    Second step of fine-tuning pre-trained model. 
 
     Use same project_setting and Model instance, loss, metrics to first step.
 
@@ -774,7 +774,7 @@ def fine_tuning_pre_trained_based_model(
     )
 
     # Save fine-tuned model
-    model_path = os.path.join(project_setting['projet_path'], f"model-mixed_precision_{fine_tune_suffix}.keras")
+    model_path = os.path.join(project_setting['project_path'], f"model-mixed_precision_{fine_tune_suffix}.keras")
 
     model.save(model_path)
 
@@ -1038,6 +1038,85 @@ def execution_example_v5():
         }
     )
 
+def fine_tuning_example_v5():
+    """
+    For Fine-tuning experiment '5th_experiment_pre-trained_efficientnetb7_based_rating_classification'
+    
+    Reduce `batch_size` because OOM error has occured in `train_rating_classification_model`
+    """
+    
+    logger.info(f"find-tuning `5th_experiment_pre-trained_efficientnetb7_based_rating_classification`")
+
+    # Load trained model
+    model = tf.keras.models.load_model("/data/PixivDataBookmarks/model_project_5th_experiment_pre-trained_efficientnetb7_based_rating_classification/model-mixed_precision.keras")
+
+    # Same as example_v5
+    project_setting = get_project_setting(
+        "/data/PixivDataBookmarks", ".database/metadata_base_r-18_sampling.sqlite3", "",
+        "5th_experiment_pre-trained_efficientnetb7_based_rating_classification", None, {
+            'image_width': 600, 'image_height': 600, 'learning_rate': 0.001,
+            'batch_size': 64, 'epoch': 30, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
+    # Reload dataset
+    # Same step as example_v5
+
+    logger.info(f"Load records from {project_setting['db_path']}")
+
+    # Load records
+    records = load_records("/data/PixivDataBookmarks", ".database/metadata_base_r-18_sampling.sqlite3")
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train and test
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'rating_prediction')
+
+    width = project_setting['width']
+    height = project_setting['height']
+
+    batch_size = 16 # reduce batch_size to avoid OOM error
+
+    train_dataset = DatasetWrapperForRatingClassification(
+        train_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB7
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWrapperForRatingClassification(
+        test_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB7
+    ).get_dataset(batch_size=batch_size)
+
+    fine_tuning_pre_trained_based_model(
+        project_setting=project_setting,
+        model=model,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
+        # Set loss and metrics for binary classification
+        loss={
+            "rating_prediction": "binary_crossentropy"
+        }, 
+        metrics={
+            "rating_prediction": [
+                tf.keras.metrics.BinaryAccuracy(name="rating_acc"),
+                tf.keras.metrics.Precision(name="rating_precision"),
+                tf.keras.metrics.Recall(name="rating_recall")
+            ]
+        },
+        epoch=10,
+        fine_tune_suffix="fine_tune_1",
+        unfreeze_boundary_name="block6a", # freeze after block6a_expand_conv
+        new_learning_rate=1e-5 # reduce learning_rate for find-tuning
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -1060,4 +1139,5 @@ if __name__ == "__main__":
     # execution_example_v2()
     # excution_example_v3()
     # execution_example_v4()
-    execution_example_v5()
+    # execution_example_v5()
+    fine_tuning_example_v5()
