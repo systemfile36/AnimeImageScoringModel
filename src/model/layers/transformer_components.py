@@ -136,6 +136,9 @@ class TransformerBlock(layers.Layer):
         self.name_prefix = name_prefix
         self.block_index = block_index
 
+        # For Attention visualize
+        self.last_attention_scores = None
+
         # Define sub-layers in `__init__`
 
         # LayerNorm and Dropout, Residual for Attention
@@ -159,7 +162,11 @@ class TransformerBlock(layers.Layer):
 
         #Self Attention block
         x = self.layer_norm_1(inputs) # PreNorm
-        attention = self.attention(x, x)
+        attention, attention_scores = self.attention(x, x, return_attention_scores=True)
+
+        # Save attention_scores
+        self.last_attention_scores = attention_scores
+
         attention = self.attention_dropout(attention, training=training)
         x = self.attention_residual([inputs, attention])
 
