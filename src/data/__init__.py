@@ -4,6 +4,7 @@ from .dataset_wrappers import DatasetWithMetaWrapper
 from .dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper
 from .dataset_wrappers import DatasetWrapperForScoreClassification
 from .dataset_wrappers import DatasetWrapperForRatingClassification
+from .dataset_wrappers import DatasetWrapperForAiClassification
 
 from .dataset import load_all_character_tags, load_records, load_all_character_tags_from_json, save_all_character_tags_as_json
 

@@ -61,7 +61,7 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     
     # Read all record from database by DataFrame
     df = pd.read_sql_query(f"""
-    SELECT filename, sanity_level, total_view, total_bookmarks, tags, tag_character, date, rating,
+    SELECT filename, sanity_level, total_view, total_bookmarks, tags, date, rating,
         (CASE WHEN illust_ai_type = 2 
             OR tags LIKE '%AIイラスト%' 
             OR tags LIKE '%Diffusion%' 
