@@ -524,6 +524,47 @@ def create_cnn_rating_classification_model(
 
     return model
 
+def create_cnn_ai_classification_model(
+        input: Input, cnn_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.1,
+        **kwargs
+) -> Model:
+    """
+    Create simple AI classification model based given CNN backbone
+
+    Dataset shape must be 
+
+    ```
+    (image, {
+        'ai_prediction': "0 or 1, if AI then 1 else 0", 
+    })
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `vit_delegate`.
+    """
+
+    # Add augmentation layers when flag set
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        image_feature = cnn_delegate(x, **kwargs)
+    else:
+        image_feature = cnn_delegate(input, **kwargs)
+
+    # Add FFN layer and Dropout
+    ffn = layers.Dense(512, activation='relu', name="final_ffn")(image_feature)
+    ffn = layers.Dropout(0.3, name="final_dropout")(ffn)
+
+    rating_pred = layers.Dense(1, activation="sigmoid", name="ai_prediction", dtype=tf.float32)(ffn)
+
+    model = Model(inputs=input, outputs={ "ai_prediction": rating_pred })
+
+    return model
+
 def create_vit_rating_classification_model(
         input: Input, vit_delegate: Callable[..., any], 
         augmentation: bool=True, 

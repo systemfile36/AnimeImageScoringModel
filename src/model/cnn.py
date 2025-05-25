@@ -58,7 +58,7 @@ def create_efficientnet_b7_pretrained(input: Input, trainable: bool=False, pooli
     )
     base_model.trainable = trainable
 
-    # shape: (batch, 19, 19, 2560) | 
+    # shape: (batch, 19, 19, 2560) | (batch, 2560)
     return base_model.output
 
 def create_efficientNet_b4_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
@@ -83,7 +83,7 @@ def create_efficientNet_b4_pretrained(input: Input, trainable: bool=False, pooli
     )
     base_model.trainable = trainable
 
-    # shape: (batch, 19, 19, 2560) | 
+    # shape: (batch, 12, 12, 1792) | (batch, 1792)
     return base_model.output
 
 

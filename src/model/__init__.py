@@ -10,3 +10,4 @@ from .models import create_cnn_meta_multitask_transformer_reg_model
 from .models import create_cnn_score_classification_model
 from .models import create_cnn_rating_classification_model
 from .models import create_vit_rating_classification_model
+from .models import create_cnn_ai_classification_model
