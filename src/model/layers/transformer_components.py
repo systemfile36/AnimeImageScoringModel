@@ -43,6 +43,7 @@ class AddPositionalOnly(layers.Layer):
         super().__init__(**kwargs)
         self.projection_dim = projection_dim
         self.num_patches = num_patches
+        self.name_prefix = name_prefix
 
         # Learnable positional embedding: shape = (1, num_patches, projection_dim)
         self.positional_embed = self.add_weight(
@@ -57,7 +58,18 @@ class AddPositionalOnly(layers.Layer):
         # Broadcast positional embedding to batch size and add
         return x + tf.cast(self.positional_embed, x.dtype)
 
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "projection_dim": self.projection_dim,
+            "num_patches": self.num_patches,
+            "name_prefix": self.name_prefix,
+        })
+        return config
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 class AddCLSandPositional(layers.Layer):
     """
     Add positional embedding and CLS token
@@ -70,6 +82,8 @@ class AddCLSandPositional(layers.Layer):
         super().__init__(**kwargs)
         self.projection_dim = projection_dim
         self.max_len = max_len
+        self.name_prefix = name_prefix
+        self.num_patches = num_patches
 
         """
         # Positional Embedding: (max_len, projection_dim)
@@ -119,6 +133,20 @@ class AddCLSandPositional(layers.Layer):
 
         return x
 
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "projection_dim": self.projection_dim,
+            "num_patches": self.num_patches,
+            "name_prefix": self.name_prefix,
+            "max_len": self.max_len
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+    
 class TransformerBlock(layers.Layer):
     def __init__(
             self, projection_dim: int,
@@ -138,6 +166,12 @@ class TransformerBlock(layers.Layer):
 
         # For Attention visualize
         self.last_attention_scores = None
+
+        # Save to instance variable for serialize
+        self.projection_dim = projection_dim
+        self.num_heads = num_heads
+        self.ffn_dim = ffn_dim
+        self.dropout_rate = dropout_rate
 
         # Define sub-layers in `__init__`
 
@@ -180,6 +214,24 @@ class TransformerBlock(layers.Layer):
         x = self.ffn_residual([x, ffn])
 
         return x
+    
+    # Override for serialize
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "projection_dim": self.projection_dim,
+            "num_heads": self.num_heads,
+            "ffn_dim": self.ffn_dim,
+            "dropout_rate": self.dropout_rate,
+            "name_prefix": self.name_prefix,
+            "block_index": self.block_index
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 
 def create_custom_vit(
         input, 

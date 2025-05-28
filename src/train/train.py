@@ -1319,6 +1319,20 @@ class WarmUpCosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
         # Return warmup_lr if step less than warmup_steps else decayed
         return tf.cond(step < self.warmup_steps, lambda: warmup_lr, lambda: decayed)
 
+    # Override for serialize
+    def get_config(self):
+        config = {
+            "base_lr": self.base_lr,
+            "total_steps": self.total_steps,
+            "warmup_steps": self.warmup_steps,
+            "min_lr": self.min_lr,
+        }
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 def fine_tuning_pre_trained_based_model_with_warmup(
         project_setting, model: Model, 
         train_dataset, test_dataset,
