@@ -1609,6 +1609,206 @@ def execution_example_v6_1():
         }
     )
 
+def execution_example_v6_2():
+    """
+    Function for experiment '6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification`
+    """
+
+    train_ai_classification_model(
+        "/data/PixivDataBookmarks", ".database/metadata_base_sample_ai_flag_uniform_sanity.sqlite3", 
+        "", "6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification", None, {
+            'image_width': 380, 'image_height': 380, 'learning_rate': 0.001,
+            'batch_size': 64, 'epoch': 30, 'data_augmentation': {
+                "zoom_range": 0.1, "rotation_range": 0.1
+            }
+        }
+    )
+
+def continuous_example_v6_2():
+    """
+    Fucntion for continuous learning of '6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification` from `fine_tune_1`
+    """
+
+    logger.info(f"continous training `6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification` from `fine_tune_1`")
+
+    # Suffix
+    continuous_suffix = "continuous_from_fine_tune_1"
+
+    # Load with `compile=True` (Default)
+    model = tf.keras.models.load_model("/data/PixivDataBookmarks/model_project_6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification/model-mixed_precision_fine_tune_1.keras")
+
+    # Same as example_v6_2
+    project_setting = get_project_setting(
+        "/data/PixivDataBookmarks", ".database/metadata_base_sample_ai_flag_uniform_sanity.sqlite3", 
+        "", "6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification", None, {
+            'image_width': 380, 'image_height': 380, 'learning_rate': 0.001,
+            'batch_size': 64, 'epoch': 30, 'data_augmentation': {
+                "zoom_range": 0.1, "rotation_range": 0.1
+            }
+        }
+    )
+
+    # Reload dataset
+    # Same step as example_v6_2
+
+    logger.info(f"Load records from {project_setting['db_path']}")
+
+    records = load_records("/data/PixivDataBookmarks", project_setting['db_path'])
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train and test
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'ai_prediction')
+
+    width = project_setting['width']
+    height = project_setting['height']
+
+    # Set batch size for fine_tune
+    batch_size = project_setting['batch_size']
+
+    # Get dataset as example_v6_2
+    train_dataset = DatasetWrapperForAiClassification(
+        train_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB4
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWrapperForAiClassification(
+        test_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB4
+    ).get_dataset(batch_size=batch_size)
+
+    csv_log_path = os.path.join(project_setting['project_path'], f"training_log_{continuous_suffix}.csv")
+
+    checkpoint_path = os.path.join(project_setting['project_path'], f"checkpoint_{continuous_suffix}")
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    # Set callback for continuous training
+    callbacks = [
+        # Set EarlyStopping. 
+        # Monitor loss. stop training when no improvement in 3 epochs.
+        EarlyStopping(monitor="val_loss", mode="min", patience=3, restore_best_weights=True, verbose=1), 
+
+        # Save model for each epoch
+        ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                        monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+        
+        CSVLogger(csv_log_path),
+		
+		# Terminate when loss or metric is NaN for safety
+		TerminateOnNaN()
+    ]
+
+    # Continue train 
+    # only epoch 5
+    model_history = model.fit(
+        train_dataset, 
+        validation_data=test_dataset,
+        epochs=5,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    model_path = os.path.join(project_setting['project_path'], f"model-mixed_precision_{continuous_suffix}.keras")
+
+    model.save(model_path)
+
+    model_artifact_path = os.path.join(project_setting['project_path'], f"model-mixed_precision-TF-SavedModel_{continuous_suffix}")
+
+    model.export(model_artifact_path)
+
+def fine_tuning_2_example_v6_2():
+    """
+    For Fine-tuning experiment '6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification`
+
+    Change unfreeze boundary from `block6a` to `bloack7a` 
+    for reduce trainable parameter (because, prev fine-tuning was overfitted)
+    """
+
+
+    logger.info(f"fine-tuning `6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification` by unfreezing `bloack7a`")
+    # Suffix
+    fine_tune_suffix = "fine_tune_2"
+
+    # Load with `compile=True` (Default)
+    # Load backbone freezed model
+    model = tf.keras.models.load_model("/data/PixivDataBookmarks/model_project_6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification/model-mixed_precision.keras")
+
+    # Same as example_v6_2
+    project_setting = get_project_setting(
+        "/data/PixivDataBookmarks", ".database/metadata_base_sample_ai_flag_uniform_sanity.sqlite3", 
+        "", "6-2th_experiment_pre-trained_efficientnetb4_mlp_ai_classification", None, {
+            'image_width': 380, 'image_height': 380, 'learning_rate': 0.001,
+            'batch_size': 64, 'epoch': 30, 'data_augmentation': {
+                "zoom_range": 0.1, "rotation_range": 0.1
+            }
+        }
+    )
+
+    # Reload dataset
+    # Same step as example_v6_2
+
+    logger.info(f"Load records from {project_setting['db_path']}")
+
+    records = load_records("/data/PixivDataBookmarks", project_setting['db_path'])
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train and test
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'ai_prediction')
+
+    width = project_setting['width']
+    height = project_setting['height']
+
+    # Set batch size for fine_tune
+    batch_size = project_setting['batch_size']
+
+    # Get dataset as example_v6_2
+    train_dataset = DatasetWrapperForAiClassification(
+        train_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB4
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWrapperForAiClassification(
+        test_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB4
+    ).get_dataset(batch_size=batch_size)
+
+    # Run fine tuning
+    fine_tuning_pre_trained_based_model(
+        project_setting=project_setting,
+        model=model,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
+        # Set loss and metrics for binary classification
+        loss={
+            "ai_prediction": "binary_crossentropy"
+        }, 
+        metrics={
+            "ai_prediction": [
+                tf.keras.metrics.BinaryAccuracy(name="ai_acc"),
+                tf.keras.metrics.Precision(name="ai_precision"),
+                tf.keras.metrics.Recall(name="ai_recall")
+            ]
+        },
+        epoch=15,
+        fine_tune_suffix=fine_tune_suffix,
+        unfreeze_boundary_name="block7a", # unfreeze after bloack7a_expand_conv
+        new_learning_rate=1e-5
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -1634,4 +1834,7 @@ if __name__ == "__main__":
     # # execution_example_v5()
     # fine_tuning_example_v5()
     # execution_example_v6()
-    execution_example_v6_1()
+    # execution_example_v6_1()
+    # execution_example_v6_2()
+    # continuous_example_v6_2()
+    fine_tuning_2_example_v6_2()
