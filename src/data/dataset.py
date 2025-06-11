@@ -92,3 +92,38 @@ def load_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.
     })
 
     return df
+
+def load_score_records(root_path: str, db_path: str, table_name: str="for_scoring_table") -> pd.DataFrame:
+    """
+    Load all score records from database
+
+    This function used for score prediction from manual labeled dataset
+
+    Args:
+        root_path: absolute path of root directory of dataset.
+        db_path: absolute or relative path of database file.
+    """
+
+    # If `db_path` is relative, then convert it to absolute.
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(root_path, db_path)
+
+    conn = sqlite3.connect(db_path)
+
+    # Load all score records from database as DataFrame
+    df = pd.read_sql_query(f"""
+    SELECT filename, manual_score, proportion_score, composition_score, background_score, costume_detail_score, 
+        color_lighting_score, completeness_score, technique_score
+    FROM {table_name}
+    WHERE manual_score IS NOT NULL
+    ORDER BY filename;                       
+    """, conn)
+
+    # Convert `filename` to `image_path`. 
+    # e.g., "1234567_p0" -> "{root_path}/12/1234567_p0.png"
+    df['image_path'] = df['filename'].apply(lambda x: os.path.join(root_path, x[:2], f"{x}.{IMAGE_EXTENSION}"))
+    
+    # Drop `filename` column 
+    del df['filename']
+
+    return df
