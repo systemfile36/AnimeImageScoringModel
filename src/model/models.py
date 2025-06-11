@@ -93,6 +93,99 @@ def create_cnn_score_classification_model(
 
     return model
 
+def create_cnn_manual_score_classification_model(
+        input: Input, cnn_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        ffn_dim: int = 512, dropout_rate: float = 0.3,
+        num_classes: int = 8,
+        **kwargs
+) -> Model:
+    """
+    Create score classification model based given CNN backbone 
+
+    Dataset shape must be 
+
+    ```
+    (image, 
+        {'manual_score': "float32" }
+    )
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `cnn_delegate`.
+    """
+
+    # Add augmentation layers when flag is true
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        image_feature = cnn_delegate(x, **kwargs)
+    else:
+        image_feature = cnn_delegate(input, **kwargs)
+
+	# Add FFN layer and Dropout
+    ffn = layers.Dense(ffn_dim, activation='relu', name="final_ffn")(image_feature)
+    ffn = layers.Dropout(dropout_rate, name="final_dropout")(ffn)
+
+    # Ensure output dtype to tf.float32 for mixed precision
+    score_pred = layers.Dense(num_classes, activation='softmax', name='manual_score', dtype=tf.float32)(ffn)
+    
+    # Set output name manually to avoid error
+    model = Model(inputs=input, outputs={ "manual_score": score_pred })
+
+    return model
+
+def create_cnn_manual_score_classification_model_v2(
+        input: Input, cnn_delegate: Callable[..., any], 
+        augmentation: bool=True, 
+        zoom_range: None | float | tuple[float, float] = 0.15,
+        rotation_range: None | float | tuple[float, float] = 0.2,
+        num_classes: int = 8,
+        **kwargs
+) -> Model:
+    """
+    Create score classification model based given CNN backbone 
+
+    Extend MLP head version
+
+    Dataset shape must be 
+
+    ```
+    (image, 
+        {'manual_score': "float32" }
+    )
+    ```
+
+    Args:
+        input: Input layer of Model
+        cnn_delegate: Model delegate in `src/model/cnn.py`
+        **kwargs: args of `cnn_delegate`.
+    """
+
+    # Add augmentation layers when flag is true
+    if augmentation:
+        x = data_augmentation(input, zoom_range=zoom_range, rotation_range=rotation_range)
+        image_feature = cnn_delegate(x, **kwargs)
+    else:
+        image_feature = cnn_delegate(input, **kwargs)
+
+	# Add FFN layers and Dropout
+    ffn = layers.Dense(1024, activation='relu', name="final_ffn_1")(image_feature)
+    ffn = layers.Dropout(0.5, name="final_dropout_1")(ffn)
+    ffn = layers.Dense(512, activation='relu', name="final_ffn_2")(ffn)
+    ffn = layers.Dropout(0.3, name="final_dropout_2")(ffn)
+
+    # Ensure output dtype to tf.float32 for mixed precision
+    score_pred = layers.Dense(num_classes, activation='softmax', name='manual_score', dtype=tf.float32)(ffn)
+    
+    # Set output name manually to avoid error
+    model = Model(inputs=input, outputs={ "manual_score": score_pred })
+
+    return model
+
 def create_cnn_meta_multitask_reg_model(
         input: Input, cnn_delegate: Callable[..., any], **kwargs
 ) -> Model:

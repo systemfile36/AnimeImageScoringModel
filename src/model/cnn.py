@@ -72,7 +72,7 @@ def create_efficientNet_b4_pretrained(input: Input, trainable: bool=False, pooli
     `include_top` is False
     """
 
-    if input.shape[1:] != (600, 600, 3):
+    if input.shape[1:] != (380, 380, 3):
         logger.error(f"Invalid Input shape : {input.shape}. It should be (600, 600, 3) for pre-trained EfficientNetB4")
 
     base_model = tf.keras.applications.EfficientNetB4(
