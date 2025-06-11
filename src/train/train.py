@@ -5,6 +5,7 @@ import numpy as np
 from typing import Callable
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, QuantileTransformer
+from sklearn.model_selection import KFold
 
 import src.model.layers
 
@@ -22,10 +23,11 @@ mixed_precision.set_global_policy("mixed_float16")
 
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping, TerminateOnNaN
 
-from src.data.dataset import load_all_character_tags, load_records
+from src.data.dataset import load_all_character_tags, load_records, load_score_records
 from src.data.dataset import load_all_character_tags_from_json, save_all_character_tags_as_json
 from src.data.dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper, DatasetWithMetaWrapper, DatasetWrapper, DatasetWrapperForScoreClassification, DatasetWrapperForRatingClassification
 from src.data.dataset_wrappers import DatasetWrapperForAiClassification
+from src.data.dataset_wrappers import DatasetWrapperForManualScoreClassification
 from src.utils import get_filename_based_logger
 
 import src.model.vit
@@ -38,6 +40,8 @@ from src.model import create_cnn_score_classification_model
 from src.model import create_cnn_rating_classification_model
 from src.model import create_cnn_ai_classification_model
 from src.model import create_cnn_transformer_ai_classification_model
+from src.model import create_cnn_manual_score_classification_model
+from src.model import create_cnn_manual_score_classification_model_v2
 
 logger = get_filename_based_logger(__file__)
 
@@ -749,7 +753,7 @@ def fine_tuning_pre_trained_based_model(
     callbacks = [
         # Set EarlyStopping. 
         # Monitor loss. stop training when no improvement in 5 epochs.
-        EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+        EarlyStopping(monitor="val_loss", mode="min", patience=7, restore_best_weights=True, verbose=1), 
 
                 # Save model for each epoch
         ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
@@ -1271,6 +1275,331 @@ def train_ai_classification_transformer_model(
         unfreeze_boundary_name="block6a", # freeze after block6a_expand_conv
         new_learning_rate=1e-5
     )
+
+def train_pseudo_label_generator_by_manual_score(
+    root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict
+):
+    
+    logger.info(f"Train {project_suffix} start...")
+
+    # extract setting to dictionary
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    project_path = project_setting['project_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
+    logger.debug(f"Config set : {config}")
+
+    # Save config file
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
+        json.dump(config, fs, indent=4)
+
+    logger.info(f"Load records from {db_path}")
+
+    # Load score records
+    records = load_score_records(root_path, db_path)
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Split train and test
+    train_records, test_records = train_test_split(
+        records, test_size=0.3, random_state=42
+    )
+
+    # Logging for debug
+    logging_records(test_records, 'image_path', 'manual_score')
+
+    # Export test records for debug and statistics
+    test_records.to_csv(os.path.join(project_path, "test_records.csv"))
+
+    train_dataset = DatasetWrapperForManualScoreClassification(
+        train_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB7
+    ).get_dataset(batch_size=batch_size)
+
+    test_dataset = DatasetWrapperForManualScoreClassification(
+        test_records, width=width, height=height,
+        normalize=False # normalize false for pre-trained EfficientNetB7
+    ).get_dataset(batch_size=batch_size)
+
+    # Create Input layer
+    inputs = Input(shape=(height, width, 3), dtype=tf.float32, name="image_input")
+
+    augmentation: bool = data_augmentation is not None
+
+    model = create_cnn_manual_score_classification_model(
+        inputs, 
+        src.model.cnn.create_efficientNet_b4_pretrained, 
+        augmentation=augmentation,
+        zoom_range=data_augmentation['zoom_range'],
+        rotation_range=data_augmentation['rotation_range'],
+        ffn_dim=512, dropout_rate=0.3,
+        num_classes=8,
+        trainable=False,
+        pooling=True # add 'avg' pooling for MLP head
+    )
+
+    model.summary()
+
+    # Save model structure for debugging 
+    model_json = model.to_json(indent=2)
+    with open(project_setting['model_json_path'], "w", encoding='utf-8') as fs:
+        fs.write(model_json)
+
+    csv_log_path = project_setting['csv_log_path']
+
+    # Create checkpoint directory
+    checkpoint_path = project_setting['checkpoint_path']
+    if not os.path.exists(checkpoint_path):
+        os.makedirs(checkpoint_path)
+
+    callbacks = [
+        # Set EarlyStopping. 
+        # Monitor loss. stop training when no improvement in 5 epochs.
+        EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+
+        # Save model for each epoch
+        ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                        monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+        
+        CSVLogger(csv_log_path),
+		
+		# Terminate when loss or metric is NaN for safety
+		TerminateOnNaN()
+    ]
+
+    model.compile(
+        # Use optimizer 'Adam'
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+        # Set loss and metrics for soft-label based classification
+        loss={
+            "manual_score": "categorical_crossentropy"
+        }, 
+        metrics={
+            "manual_score": [expected_mae]
+        }
+    )
+
+    model_history = model.fit(
+        train_dataset, 
+        validation_data=test_dataset,
+        epochs=epoch_count,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    save_history_as_json(model_history, project_setting['model_history_path'])
+
+    # Save model as keras
+    model.save(project_setting['model_path'])
+
+    model_artifact_path = project_setting['model_artifact_path']
+
+    # Save model as TF SavedModel
+    # See following link. 
+    # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
+    model.export(model_artifact_path)
+
+    fine_tuning_pre_trained_based_model(
+        project_setting=project_setting,
+        model=model,
+        train_dataset=train_dataset,
+        test_dataset=test_dataset,
+        # Use same loss and metrics with train
+        loss={
+            "manual_score": "categorical_crossentropy"
+        }, 
+        metrics={
+            "manual_score": [expected_mae]
+        },
+        epoch=20,
+        fine_tune_suffix="fine_tune_1",
+        unfreeze_boundary_name="block_6a",
+        new_learning_rate=1e-5
+    )
+
+def train_pseudo_label_generator_by_manual_score_k_fold(
+    root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict
+):
+    """
+    Train CNN + MLP based pseudo-lable generator from manual labeled score. 
+
+    Using K-Fold Cross Validation
+    """
+
+    logger.info(f"Train {project_suffix} start...")
+
+    # extract setting to dictionary
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    project_path = project_setting['project_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
+    logger.debug(f"Config set : {config}")
+
+    # Save config file
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
+        json.dump(config, fs, indent=4)
+
+    logger.info(f"Load records from {db_path}")
+
+    # Load score records
+    records = load_score_records(root_path, db_path)
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Generate K-Fold index array
+    # This will generate 
+    kfold = KFold(n_splits=4, shuffle=True, random_state=42)
+
+    logger.info("Start K-Fold iteration")
+
+    # K-Fold iteration
+    for fold, (train_i, test_i) in enumerate(kfold.split(records)):
+        logger.info(f"Start Fold {fold + 1}==========================")
+
+        # Create sub directory each fold
+        fold_project_path = os.path.join(project_path, f"fold_{fold + 1}")
+        if not os.path.exists(fold_project_path):
+            os.makedirs(fold_project_path)
+
+        # Split train and test by K-Fold index array
+        train_records = records.iloc[train_i]
+        test_records = records.iloc[test_i]
+
+        # Logging for debug
+        logging_records(test_records, 'image_path', 'manual_score')
+
+        # Export test records for debug and statistics
+        test_records.to_csv(os.path.join(fold_project_path, "test_records.csv"))
+
+        train_dataset = DatasetWrapperForManualScoreClassification(
+            train_records, width=width, height=height,
+            normalize=False # normalize false for pre-trained EfficientNetB7
+        ).get_dataset(batch_size=batch_size)
+
+        test_dataset = DatasetWrapperForManualScoreClassification(
+            test_records, width=width, height=height,
+            normalize=False # normalize false for pre-trained EfficientNetB7
+        ).get_dataset(batch_size=batch_size)
+
+        # Create Input layer
+        inputs = Input(shape=(height, width, 3), dtype=tf.float32, name="image_input")
+
+        augmentation: bool = data_augmentation is not None
+
+        model = create_cnn_manual_score_classification_model_v2(
+            inputs, 
+            src.model.cnn.create_efficientNet_b4_pretrained, 
+            augmentation=augmentation,
+            zoom_range=data_augmentation['zoom_range'],
+            rotation_range=data_augmentation['rotation_range'],
+            num_classes=8,
+            trainable=False,
+            pooling=True # add 'avg' pooling for MLP head
+        )
+
+        # Save model structure for debugging 
+        model_json = model.to_json(indent=2)
+        model_json_path = os.path.join(fold_project_path, "model_structure.json")
+        with open(model_json_path, "w", encoding='utf-8') as fs:
+            fs.write(model_json)
+
+        csv_log_path = os.path.join(fold_project_path, "training_log.csv")
+
+        # Create checkpoint directory
+        checkpoint_path = os.path.join(fold_project_path, "checkpoints")
+        if not os.path.exists(checkpoint_path):
+            os.makedirs(checkpoint_path)
+
+        callbacks = [
+            # Set EarlyStopping. 
+            # Monitor loss. stop training when no improvement in 5 epochs.
+            EarlyStopping(monitor="val_loss", mode="min", patience=7, restore_best_weights=True, verbose=1), 
+
+            # Save model for each epoch
+            ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                            monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+            
+            CSVLogger(csv_log_path),
+            
+            # Terminate when loss or metric is NaN for safety
+            TerminateOnNaN()
+        ]
+
+        model.compile(
+            # Use optimizer 'Adam'
+            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+            # Use KLDivergence for softmax and soft-label
+            loss={
+                "manual_score": tf.keras.losses.KLDivergence()
+            }, 
+            metrics={
+                "manual_score": [expected_mae]
+            }
+        )
+
+        model_history = model.fit(
+            train_dataset, 
+            validation_data=test_dataset,
+            epochs=epoch_count,
+            callbacks=callbacks,
+            verbose=1
+        )
+
+        model_history_path = os.path.join(fold_project_path, "model_history.json")
+        save_history_as_json(model_history, model_history_path)
+
+        # Save model as keras each fold
+        model_path = os.path.join(fold_project_path, f"model-mixed_precision_fold{fold + 1}.keras")
+        model.save(model_path)
+
+        model_artifact_path = os.path.join(fold_project_path, f"model-mixed_precision_fold{fold + 1}-TF-SavedModel")
+
+        # Save model as TF SavedModel
+        # See following link. 
+        # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
+        model.export(model_artifact_path)
+
+        project_setting['project_path'] = fold_project_path
+
+        fine_tuning_pre_trained_based_model(
+            project_setting=project_setting,
+            model=model,
+            train_dataset=train_dataset,
+            test_dataset=test_dataset,
+            # Use KLDivergence for softmax and soft-label
+            loss={
+                "manual_score": tf.keras.losses.KLDivergence()
+            }, 
+            metrics={
+                "manual_score": [expected_mae]
+            },
+            epoch=20,
+            fine_tune_suffix=f"fine_tune_1_fold{fold + 1}",
+            unfreeze_boundary_name="block_6a",
+            new_learning_rate=1e-5
+        )
 
 def expected_mae(y_true, y_pred):
     """
@@ -1809,6 +2138,36 @@ def fine_tuning_2_example_v6_2():
         new_learning_rate=1e-5
     )
 
+def execution_1st_pseudo_label_generator_train():
+    """
+    Function to train `1st_pseudo-label_generator_pre-trained_efficientNetb4_mlp`
+    """
+
+    train_pseudo_label_generator_by_manual_score(
+        "/data/PixivDataBookmarks", ".database/metadata_manual_verified.sqlite3", "",
+        "1st_pseudo-label_generator_pre-trained_efficientNetb4_mlp", None, {
+            'image_width': 380, 'image_height': 380, 'learning_rate': 0.001, 
+            'batch_size': 64, 'epoch': 35, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
+def execution_2nd_pseudo_label_generator_train():
+    """
+    Function to train `2nd_pseudo-label_generator_pre-trained_efficientNetb4_mlp`
+    """
+
+    train_pseudo_label_generator_by_manual_score_k_fold(
+        "/data/PixivDataBookmarks", ".database/metadata_manual_verified.sqlite3", "",
+        "2nd_pseudo-label_generator_pre-trained_efficientNetb4_mlp", None, {
+            'image_width': 380, 'image_height': 380, 'learning_rate': 0.001, 
+            'batch_size': 64, 'epoch': 35, 'data_augmentation': {
+                "zoom_range": 0.15, "rotation_range": 0.2
+            }
+        }
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -1837,4 +2196,6 @@ if __name__ == "__main__":
     # execution_example_v6_1()
     # execution_example_v6_2()
     # continuous_example_v6_2()
-    fine_tuning_2_example_v6_2()
+    # fine_tuning_2_example_v6_2()
+    # execution_1st_pseudo_label_generator_train()
+    execution_2nd_pseudo_label_generator_train()
