@@ -86,6 +86,84 @@ def create_efficientNet_b4_pretrained(input: Input, trainable: bool=False, pooli
     # shape: (batch, 12, 12, 1792) | (batch, 1792)
     return base_model.output
 
+def create_efficientNet_b1_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
+    """
+    Create pre-trained EfficientNetB1 from keras.applications and return output
+
+    `input.shape` should match (240, 240, 3) 
+
+    Image input should be float32 [0, 255]
+
+    `include_top` is False
+    """
+
+    if input.shape[1:] != (240, 240, 3):
+        logger.error(f"Invalid Input shape : {input.shape}. It should be (240, 240, 3) for pre-trained EfficientNetB4")
+
+    base_model = tf.keras.applications.EfficientNetB1(
+        include_top=False,
+        weights='imagenet',
+        input_tensor=input,
+        pooling='avg' if pooling else None
+    )
+    base_model.trainable = trainable
+
+    # shape: (batch, H, W, C) | (batch, C)
+    return base_model.output
+
+def create_efficientNet_b0_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
+    """
+    Create pre-trained EfficientNetB1 from keras.applications and return output
+
+    `input.shape` should match (224, 224, 3) 
+
+    Image input should be float32 [0, 255]
+
+    `include_top` is False
+    """
+
+    if input.shape[1:] != (224, 224, 3):
+        logger.error(f"Invalid Input shape : {input.shape}. It should be (224, 224, 3) for pre-trained EfficientNetB4")
+
+    base_model = tf.keras.applications.EfficientNetB0(
+        include_top=False,
+        weights='imagenet',
+        input_tensor=input,
+        pooling='avg' if pooling else None
+    )
+    base_model.trainable = trainable
+
+    # shape: (batch, H, W, C) | (batch, C)
+    return base_model.output
+
+def create_mobilenet_v2_pretrained(input: Input, trainable: bool=False, pooling: bool=True):
+    """
+    Create pre-trained MobileNetV2 from keras.applications and return output
+
+    `input.shape` should match (224, 224, 3) 
+
+    `include_top` is False
+    """
+
+    if input.shape[1:] != (224, 224, 3):
+        logger.error(f"Invalid Input shape : {input.shape}. It should be (224, 224, 3) for pre-trained EfficientNetB4")
+
+    # Include preprocess layer for MobileNetV2. 
+    # See https://keras.io/api/applications/mobilenet/#mobilenetv2-function
+    x = layers.Lambda(
+        lambda x: tf.keras.applications.mobilenet_v2.preprocess_input(tf.cast(x, tf.float32))
+    )(input)
+
+    base_model = tf.keras.applications.MobileNetV2(
+        include_top=False,
+        weights='imagenet',
+        input_tensor=x,
+        pooling='avg' if pooling else None
+    )
+    base_model.trainable = trainable
+
+    # shape: (batch, H, W, C) | (batch, C)
+    return base_model.output
 
 def create_resnet152(x, pooling: bool=True):
     """
