@@ -6,6 +6,9 @@ from .dataset_wrappers import DatasetWrapperForScoreClassification
 from .dataset_wrappers import DatasetWrapperForRatingClassification
 from .dataset_wrappers import DatasetWrapperForAiClassification
 from .dataset_wrappers import DatasetWrapperForManualScoreClassification
+from .dataset_wrappers import DatasetWrapperForManualScoreClassificationWithMultiTask
+from .dataset_wrappers import DatasetWrapperForManualScoreRegressionWithMultiTask
+from .dataset_wrappers import DatasetWrapperForSanityLevelClassification
 
 from .dataset import load_all_character_tags, load_records, load_all_character_tags_from_json, save_all_character_tags_as_json
 from .dataset import load_score_records

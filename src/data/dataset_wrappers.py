@@ -124,11 +124,13 @@ class DatasetWrapperForManualScoreClassification(DatasetWrapper):
 
     This class used for `manual_score` prediction by soft-vector based classification 
 
+    Use `num_classes` for coarse-lebel (Default is 8)
+
     The dataset will have the shape 
 
     ```
     (image, {
-        'score_prediction': "(8,), Soft label vector."
+        'manual_score': "(N,), Soft label vector."
     })
     ```
 
@@ -145,7 +147,7 @@ class DatasetWrapperForManualScoreClassification(DatasetWrapper):
     def __init__(
             self, data: dict,
             width: int, height: int, normalize: bool=True, 
-            sigma: float = 1.0
+            sigma: float = 1.0, num_classes: int = 8
     ):
         """
         The argument `data` must contain the keys `image_path` and `manual_score`
@@ -161,8 +163,7 @@ class DatasetWrapperForManualScoreClassification(DatasetWrapper):
 
         self.normalize = normalize
 
-        # length of `manual_score` soft label vector
-        self.num_classes = 8
+        self.num_classes = num_classes
 
         # sigma for Gaussian soft-label
         self.sigma = sigma
@@ -204,12 +205,143 @@ class DatasetWrapperForManualScoreClassification(DatasetWrapper):
     
     def score_to_gaussian_soft_label(self, score, sigma: float=1.0) -> np.ndarray:
         """
+        Convert a float score (3 ~ 10) to a Gaussian based soft label (length = num_classes)
+        
+        Args:
+            score: float in range [3, 10]
+            sigma: standard deviation of Gaussian kernel (controls smoothness)
+        """
+
+        # Class centers: 
+        class_centers = np.linspace(3, 10, self.num_classes)
+
+        # Compute Gaussian probabilities
+        label = np.exp(- (score - class_centers) ** 2 / (2 * sigma ** 2))
+
+        # Normalize
+        label /= np.sum(label)
+
+        return label.astype(np.float32)
+
+class DatasetWrapperForManualScoreClassificationWithMultiTask(DatasetWrapper):
+    """
+    DatasetWrapper class for `manual_score` classification
+
+    This class used for `manual_score` prediction by soft-vector based classification 
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'manual_score': "(8,), Soft label vector.",
+        'color_lighting_score': "(8,), Soft label vector.",
+        'costume_detail_score': "(8,), Soft label vector.", 
+        'proportion_score': "(8,), Soft label vector."
+    })
+    ```
+
+    The input data should have the shape 
+
+    ```
+    ({
+        `image_path`: "str, absolute path to image", 
+        'manual_score': "float32, [3, 10]",
+        'color_lighting_score': "float32, [3, 10]",
+        'costume_detail_score': "float32, [3, 10]",
+        'proportion_score': "float32, [3, 10]"
+    })
+    ```
+    """
+
+    def __init__(
+            self, data: dict,
+            width: int, height: int, normalize: bool=True, 
+            sigma: float = 1.0
+    ):
+        """
+        The argument `data` must contain the keys `image_path` and `manual_score`
+        """
+
+        self.inputs = {
+            'image_path': data['image_path'],
+            'manual_score': data['manual_score'], 
+            'color_lighting_score': data['color_lighting_score'],
+            'costume_detail_score': data['costume_detail_score'], 
+            'proportion_score': data['proportion_score']
+        } if data is not None else None
+
+        self.width = width
+        self.height = height
+
+        self.normalize = normalize
+
+        # length of `manual_score` soft label vector
+        self.num_classes = 8
+
+        # sigma for Gaussian soft-label
+        self.sigma = sigma
+
+    def load_image_for_map(self, data_slice):
+        
+        image = self.load_image(data_slice['image_path'])
+        
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, 
+                data_slice['manual_score'], 
+                data_slice['color_lighting_score'],
+                data_slice['costume_detail_score'],
+                data_slice['proportion_score'])
+    
+    def map_labels(self, image, manual_score, color_lighting_score, costume_detail_score, proportion_score):
+        image, manual, color_lighting, costume_detail, proportion = tf.py_function(
+            self.map_labels_py,
+            (image, manual_score, color_lighting_score, costume_detail_score, proportion_score),
+            (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32)
+        )
+
+        # Set shape for safety
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+        manual.set_shape([self.num_classes]) # (N,), soft label vector
+        color_lighting.set_shape([self.num_classes]) # (N,), soft label vector
+        costume_detail.set_shape([self.num_classes]) # (N,), soft label vector
+        proportion.set_shape([self.num_classes]) # (N,), soft label vector
+
+        # packing to dict again
+        return (image, {
+            'manual_score': manual, 
+            'color_lighting_score': color_lighting, 
+            'costume_detail_score': costume_detail,
+            'proportion_score': proportion
+        })
+
+    def map_labels_py(self, image, manual_score, color_lighting_score, costume_detail_score, proportion_score):
+        
+        # Convert score to soft label vector 
+        # (8,) like [0, 0, ..., 0.4, 0.6, ...]
+        # score = self.score_to_soft_label(score_value)
+
+        # Use Gaussian soft label instead of Linear
+        manual = self.score_to_gaussian_soft_label(manual_score, self.sigma)
+
+        color_lighting = self.score_to_gaussian_soft_label(color_lighting_score, self.sigma)
+
+        costume_detail = self.score_to_gaussian_soft_label(costume_detail_score, self.sigma)
+
+        proportion = self.score_to_gaussian_soft_label(proportion_score, self.sigma)
+
+        return (image, manual, color_lighting, costume_detail, proportion)
+    
+    def score_to_gaussian_soft_label(self, score, sigma: float=1.0) -> np.ndarray:
+        """
         Convert a float score (3 ~ 10) to a Gaussian based soft label (length = 8)
         
         Args:
             score: float in range [3, 10]
             sigma: standard deviation of Gaussian kernel (controls smoothness)
         """
+
+        # Type cast for safety
+        score = float(score)
 
         # Class centers: [3, 4, ..., 10]
         class_centers = np.linspace(3, 10, self.num_classes)
@@ -247,6 +379,106 @@ class DatasetWrapperForManualScoreClassification(DatasetWrapper):
             label[ceil - 1] = delta
 
         return label
+
+class DatasetWrapperForManualScoreRegressionWithMultiTask(DatasetWrapper):
+    """
+    DatasetWrapper class for `manual_score` regression
+
+    This class used for `manual_score` prediction by regression 
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'manual_score': "(8,), Soft label vector.",
+        'color_lighting_score': "(8,), Soft label vector.",
+        'costume_detail_score': "(8,), Soft label vector.", 
+        'proportion_score': "(8,), Soft label vector."
+    })
+    ```
+
+    The input data should have the shape 
+
+    ```
+    ({
+        `image_path`: "str, absolute path to image", 
+        'manual_score': "float32, [3, 10]",
+        'color_lighting_score': "float32, [3, 10]",
+        'costume_detail_score': "float32, [3, 10]",
+        'proportion_score': "float32, [3, 10]"
+    })
+    ```
+    """
+
+    def __init__(
+            self, data: dict,
+            width: int, height: int, normalize: bool=True, 
+    ):
+        """
+        The argument `data` must contain the keys `image_path` and `manual_score`
+        """
+
+        self.inputs = {
+            'image_path': data['image_path'],
+            'manual_score': data['manual_score'], 
+            'color_lighting_score': data['color_lighting_score'],
+            'costume_detail_score': data['costume_detail_score'], 
+            'proportion_score': data['proportion_score']
+        } if data is not None else None
+
+        self.width = width
+        self.height = height
+
+        self.normalize = normalize
+
+    def load_image_for_map(self, data_slice):
+        
+        image = self.load_image(data_slice['image_path'])
+        
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, 
+                data_slice['manual_score'], 
+                data_slice['color_lighting_score'],
+                data_slice['costume_detail_score'],
+                data_slice['proportion_score'])
+    
+    def map_labels(self, image, manual_score, color_lighting_score, costume_detail_score, proportion_score):
+        image, manual, color_lighting, costume_detail, proportion = tf.py_function(
+            self.map_labels_py,
+            (image, manual_score, color_lighting_score, costume_detail_score, proportion_score),
+            (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32)
+        )
+
+        # Set shape for safety
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+
+        # Just float value
+        manual.set_shape([1])
+        color_lighting.set_shape([1])
+        costume_detail.set_shape([1])
+        proportion.set_shape([1])
+
+        # packing to dict again
+        return (image, {
+            'manual_score': manual, 
+            'color_lighting_score': color_lighting, 
+            'costume_detail_score': costume_detail,
+            'proportion_score': proportion
+        })
+
+    def map_labels_py(self, image, manual_score, color_lighting_score, costume_detail_score, proportion_score):
+        
+        # Just type cast
+        manual = np.array([manual_score]).astype(np.float32)
+
+        color_lighting = np.array([color_lighting_score]).astype(np.float32)
+
+        costume_detail = np.array([costume_detail_score]).astype(np.float32)
+
+        proportion = np.array([proportion_score]).astype(np.float32)
+
+        return (image, manual, color_lighting, costume_detail, proportion)
+    
 
 class DatasetWrapperForScoreClassification(DatasetWrapper):
     """
@@ -399,6 +631,95 @@ class DatasetWrapperForRatingClassification(DatasetWrapper):
         rating_vector = np.array([rating_vector]).astype(np.float32)
 
         return (image, rating_vector)
+
+class DatasetWrapperForSanityLevelClassification(DatasetWrapper):
+    """
+    DatasetWrapper class for predict `sanity_level` by Gaussian soft-label based
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'sanity_level': "(4,), Gaussian soft-label vector"
+        })
+    ```
+        
+    The input data shuold have the shape 
+    ({
+        'image_path': "str, absolute path to image",
+        'sanity_level': "int, 2 or 4 or 6 or 8. 8 is R-18, 6 is NSFW, 4 is sensitive, 2 is SFW"
+    })
+
+    """
+    def __init__(
+            self, data: dict,
+            width: int, height: int, normalize: bool=True, 
+            gaussian_sigma: float=0.7
+    ):  
+        super().__init__(None, width, height, normalize)
+
+        self.inputs = {
+            'image_path': data['image_path'],
+            'sanity_level': data['sanity_level']
+        }
+
+        self.sigma = gaussian_sigma
+
+
+    def load_image_for_map(self, data_slice):
+
+        image = self.load_image(data_slice['image_path'])
+
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, data_slice['sanity_level'])
+    
+    def map_labels(self, image, sanity_level):
+        image, sanity_vector = tf.py_function(
+            self.map_labels_py,
+            (image, sanity_level),
+            (tf.float32, tf.float32)
+        )
+
+        sanity_vector.set_shape([4]) # Soft-label Vector
+
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+
+        # packing to dict again
+        return (image, {
+            'sanity_level': sanity_vector
+        })
+
+    def map_labels_py(self, image, sanity_level):
+
+        # Convert to Gaussian vector
+        sanity_vector = self.score_to_gaussian_soft_label(sanity_level, self.sigma)
+
+        return (image, sanity_vector)
+    
+    def score_to_gaussian_soft_label(self, score, sigma: float=1.0) -> np.ndarray:
+        """
+        Convert a `sanity_level`(2 | 4 | 6 | 8) to a Gaussian based soft label (length = 4)
+        
+        Example: 2 -> [0.7, 0.2, 0.1, 0]
+
+        Args:
+            score: integer (2 | 4 | 6 | 8)
+            sigma: standard deviation of Gaussian kernel (controls smoothness)
+        """
+
+        # Type cast for safety
+        score = float(score)
+
+        # Class centers: [2, 4, 6, 8]
+        class_centers = np.linspace(2, 8, 4)
+
+        # Compute Gaussian probabilities
+        label = np.exp(- (score - class_centers) ** 2 / (2 * sigma ** 2))
+
+        # Normalize
+        label /= np.sum(label)
+
+        return label.astype(np.float32)
 
 class DatasetWrapperForAiClassification(DatasetWrapper):
     """
