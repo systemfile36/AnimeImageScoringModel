@@ -23,3 +23,7 @@ from .models import create_cnn_manual_score_regression_multi_task_model_v1
 
 from .models import create_cnn_transformer_sanity_level_classification_model
 from .models import create_cnn_sanity_level_classification_model
+
+from .models import create_cnn_quality_binary_classification_model
+from .models import create_vit_quality_binary_classification_model
+from .models import create_cnn_transformer_quality_binary_classification_model
