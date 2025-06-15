@@ -23,7 +23,7 @@ mixed_precision.set_global_policy("mixed_float16")
 
 from tensorflow.keras.callbacks import ModelCheckpoint, CSVLogger, EarlyStopping, TerminateOnNaN
 
-from src.data.dataset import load_all_character_tags, load_records, load_score_records
+from src.data.dataset import load_all_character_tags, load_records, load_score_records, load_quality_binary_records
 from src.data.dataset import load_all_character_tags_from_json, save_all_character_tags_as_json
 from src.data.dataset_wrappers import DatasetWithMetaAndTagCharacterWrapper, DatasetWithMetaWrapper, DatasetWrapper, DatasetWrapperForScoreClassification, DatasetWrapperForRatingClassification
 from src.data.dataset_wrappers import DatasetWrapperForAiClassification
@@ -31,6 +31,7 @@ from src.data.dataset_wrappers import DatasetWrapperForManualScoreClassification
 from src.data.dataset_wrappers import DatasetWrapperForManualScoreClassificationWithMultiTask
 from src.data.dataset_wrappers import DatasetWrapperForManualScoreRegressionWithMultiTask
 from src.data.dataset_wrappers import DatasetWrapperForSanityLevelClassification
+from src.data.dataset_wrappers import DatasetWrapperForAestheticBinaryClassification
 
 from src.utils import get_filename_based_logger
 
@@ -52,6 +53,9 @@ from src.model import create_cnn_manual_score_classification_model_v5
 from src.model import create_cnn_manual_score_classification_model_v6
 from src.model import create_cnn_manual_score_classification_multi_task_model_v1
 from src.model import create_cnn_manual_score_regression_multi_task_model_v1
+from src.model import create_cnn_transformer_quality_binary_classification_model
+from src.model import create_cnn_quality_binary_classification_model
+from src.model import create_vit_quality_binary_classification_model
 
 from src.model import create_cnn_sanity_level_classification_model
 from src.model import create_cnn_transformer_sanity_level_classification_model
@@ -2475,6 +2479,189 @@ def train_pseudo_label_generator_by_manual_score_regression_multi_task_k_fold(
             new_learning_rate=5e-6
         )
 
+def train_pseudo_label_generator_by_quality_binary_k_fold(
+    root_path: str, db_path: str, aliases_path: str, project_suffix:str, config_path: str, config_dict: dict
+):
+    """
+    Train CNN + MLP based pseudo-lable generator from quality_binary 
+
+    Using K-Fold Cross Validation
+    """
+
+    logger.info(f"Train {project_suffix} start...")
+
+    # extract setting to dictionary
+    project_setting = get_project_setting(root_path, db_path, aliases_path, project_suffix, config_path, config_dict)
+
+    config = project_setting['config']
+    db_path = project_setting['db_path']
+    aliases_path = project_setting['aliases_path']
+    project_path = project_setting['project_path']
+    width = project_setting['width']
+    height = project_setting['height']
+    learning_rate = project_setting['learning_rate']
+    batch_size = project_setting['batch_size']
+    epoch_count = project_setting['epoch_count']
+    loss_weights = project_setting['loss_weights']
+    data_augmentation = project_setting['data_augmentation']
+
+    logger.debug(f"Config set : {config}")
+
+    # Save config file
+    with open(project_setting['config_save_path'], "w", encoding="utf-8") as fs:
+        json.dump(config, fs, indent=4)
+
+    logger.info(f"Load records from {db_path}")
+
+    # Load quality_binary records
+    records = load_quality_binary_records(root_path, db_path)
+
+    # Filter image file not exists
+    records = filter_image_exists(records)
+
+    # Generate K-Fold index array
+    # This will generate 
+    kfold = KFold(n_splits=4, shuffle=True, random_state=42)
+
+    logger.info("Start K-Fold iteration")
+
+    # K-Fold iteration
+    for fold, (train_i, test_i) in enumerate(kfold.split(records)):
+        logger.info(f"Start Fold {fold + 1}==========================")
+
+        # Create sub directory each fold
+        fold_project_path = os.path.join(project_path, f"fold_{fold + 1}")
+        if not os.path.exists(fold_project_path):
+            os.makedirs(fold_project_path)
+
+        # Split train and test by K-Fold index array
+        train_records = records.iloc[train_i]
+        test_records = records.iloc[test_i]
+
+        # Logging for debug
+        logging_records(test_records, 'image_path', 'quality_binary')
+
+        # Export test records for debug and statistics
+        test_records.to_csv(os.path.join(fold_project_path, "test_records.csv"))
+
+        train_dataset = DatasetWrapperForAestheticBinaryClassification(
+            train_records, width=width, height=height,
+            normalize=False, # normalize false for pre-trained EfficientNet
+        ).get_dataset(batch_size=batch_size)
+
+        test_dataset = DatasetWrapperForAestheticBinaryClassification(
+            test_records, width=width, height=height,
+            normalize=False, # normalize false for pre-trained EfficientNet
+        ).get_dataset(batch_size=batch_size)
+
+        # Create Input layer
+        inputs = Input(shape=(height, width, 3), dtype=tf.float32, name="image_input")
+
+        augmentation: bool = data_augmentation is not None
+
+        model = create_cnn_quality_binary_classification_model(
+            inputs, 
+            # src.model.cnn.create_efficientNet_b0_pretrained,
+            src.model.cnn.create_efficientNet_b1_pretrained, # Change Backbone
+            augmentation=augmentation,
+            zoom_range=data_augmentation['zoom_range'],
+            rotation_range=data_augmentation['rotation_range'],
+            trainable=False,
+            pooling=True # add 'avg' pooling for MLP head
+        )
+
+        # Save model structure for debugging 
+        model_json = model.to_json(indent=2)
+        model_json_path = os.path.join(fold_project_path, "model_structure.json")
+        with open(model_json_path, "w", encoding='utf-8') as fs:
+            fs.write(model_json)
+
+        csv_log_path = os.path.join(fold_project_path, "training_log.csv")
+
+        # Create checkpoint directory
+        checkpoint_path = os.path.join(fold_project_path, "checkpoints")
+        if not os.path.exists(checkpoint_path):
+            os.makedirs(checkpoint_path)
+
+        callbacks = [
+            # Set EarlyStopping. 
+            # Monitor loss. stop training when no improvement in 5 epochs.
+            EarlyStopping(monitor="val_loss", mode="min", patience=5, restore_best_weights=True, verbose=1), 
+
+            # Save model for each epoch
+            ModelCheckpoint(filepath=os.path.join(checkpoint_path, "{epoch:02d}-{val_loss:.2f}.keras"),
+                            monitor="val_loss", mode="min", save_weights_only=False, verbose=1),
+            
+            CSVLogger(csv_log_path),
+            
+            # Terminate when loss or metric is NaN for safety
+            TerminateOnNaN()
+        ]
+
+        model.compile(
+            # Use optimizer 'Adam'
+            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+            # Use binary crossentropy for binary classification
+            loss={
+                "quality_prediction": "binary_crossentropy"
+            }, 
+            metrics={
+                "quality_prediction": [
+                    tf.keras.metrics.BinaryAccuracy(name="q_acc"),
+                    tf.keras.metrics.Precision(name="q_precision"),
+                    tf.keras.metrics.Recall(name="q_recall")
+                ]
+            }
+        )
+
+        model_history = model.fit(
+            train_dataset, 
+            validation_data=test_dataset,
+            epochs=epoch_count,
+            callbacks=callbacks,
+            verbose=1
+        )
+
+        model_history_path = os.path.join(fold_project_path, "model_history.json")
+        save_history_as_json(model_history, model_history_path)
+
+        # Save model as keras each fold
+        model_path = os.path.join(fold_project_path, f"model-mixed_precision_fold{fold + 1}.keras")
+        model.save(model_path)
+
+        model_artifact_path = os.path.join(fold_project_path, f"model-mixed_precision_fold{fold + 1}-TF-SavedModel")
+
+        # Save model as TF SavedModel
+        # See following link. 
+        # https://www.tensorflow.org/api_docs/python/tf/keras/Model?_gl=1*145jd63*_up*MQ..*_ga*MzAxMzM3NDQyLjE3NDY5ODYwNjg.*_ga_W0YLR4190T*czE3NDY5ODYwNjckbzEkZzAkdDE3NDY5ODY0MjckajAkbDAkaDA.
+        model.export(model_artifact_path)
+
+        project_setting['project_path'] = fold_project_path
+
+        fine_tuning_pre_trained_based_model(
+            project_setting=project_setting,
+            model=model,
+            train_dataset=train_dataset,
+            test_dataset=test_dataset,
+            # Use binary crossentropy for binary classification
+            loss={
+                "quality_prediction": "binary_crossentropy"
+            }, 
+            metrics={
+                "quality_prediction": [
+                    tf.keras.metrics.BinaryAccuracy(name="q_acc"),
+                    tf.keras.metrics.Precision(name="q_precision"),
+                    tf.keras.metrics.Recall(name="q_recall")
+                ]
+            },
+            epoch=20,
+            fine_tune_suffix=f"fine_tune_1_fold{fold + 1}",
+            # unfreeze_boundary_name="block6a",
+            unfreeze_boundary_name="block7a", # reduce unfreeze block count
+            # unfreeze_boundary_name="block_13", # For MobileNetV2
+            new_learning_rate=1e-5
+            # new_learning_rate=5e-6
+        )
 
 def expected_mae(y_true, y_pred):
     """
@@ -3432,6 +3619,46 @@ def execution_2nd_sanity_level_soft_label_train():
         }, gaussian_sigma=0.7
     )
 
+def execution_12th_pseudo_label_generator_train():
+    """
+    Function to train `12th_pseudo-label_generator_pre-trained_efficientNetb0_mlp`
+    
+    use `create_cnn_quality_binary_classification_model`
+
+    Binary classification by `quality_binary` 
+    """
+
+    train_pseudo_label_generator_by_quality_binary_k_fold(
+        "/data/PixivDataBookmarks", ".database/metadata_for_quality_binary.sqlite3", "",
+        "12th_pseudo-label_generator_pre-trained_efficientNetb0_mlp", None, {
+            'image_width': 224, 'image_height': 224, 'learning_rate': 5e-4, 
+            'batch_size': 32, 'epoch': 35, 'data_augmentation': {
+                "zoom_range": 0.05, "rotation_range": 0.02
+            }
+        }
+    )
+
+def execution_12th_1_pseudo_label_generator_train():
+    """
+    Function to train `12th_1_pseudo-label_generator_pre-trained_efficientNetb1_mlp`
+    
+    use `create_cnn_quality_binary_classification_model`
+
+    Binary classification by `quality_binary` 
+
+    Change Backbone to EfficientNetB1
+    """
+
+    train_pseudo_label_generator_by_quality_binary_k_fold(
+        "/data/PixivDataBookmarks", ".database/metadata_for_quality_binary.sqlite3", "",
+        "12th_1_pseudo-label_generator_pre-trained_efficientNetb1_mlp", None, {
+            'image_width': 240, 'image_height': 240, 'learning_rate': 5e-4, 
+            'batch_size': 32, 'epoch': 35, 'data_augmentation': {
+                "zoom_range": 0.05, "rotation_range": 0.02
+            }
+        }
+    )
+
 def for_test():
 
     print(get_project_setting(
@@ -3480,5 +3707,7 @@ if __name__ == "__main__":
     # execution_2nd_6_pseudo_label_generator_train()
     # execution_10th_2_pseudo_label_generator_train()
     # execution_example_v5_1()
-    execution_1st_sanity_level_soft_label_train()
-    execution_2nd_sanity_level_soft_label_train()
+    # execution_1st_sanity_level_soft_label_train()
+    # execution_2nd_sanity_level_soft_label_train()
+    # execution_12th_pseudo_label_generator_train()
+    execution_12th_1_pseudo_label_generator_train()
