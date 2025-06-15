@@ -118,6 +118,82 @@ class DatasetWrapper():
     def map_labels_py(self, data_slice):
         pass
 
+class DatasetWrapperForAestheticBinaryClassification(DatasetWrapper):
+    """
+    DatasetWrapper class for image aesthetic binary classification
+
+    This class used for 
+    pseudo-label generator for image aesthetic binary classification 
+    based on `quality_binary`
+
+    The dataset will have the shape 
+
+    ```
+    (image, {
+        'quality_prediction': "0 or 1, if hight quality then 1 else 0"
+    })
+    ```
+
+    The input data should have the shape 
+
+    ```
+    ({
+        'image_path': "str, absolute path to image", 
+        'quality_binary': "0 or 1"
+    })
+    ```
+    """
+
+    def __init__(
+            self, data: dict,
+            width: int, height: int, normalize: bool=True
+    ):
+        """
+        The argument `data` must contain the keys `image_path` and `quality_binary`
+        """
+
+        self.inputs = {
+            'image_path': data['image_path'],
+            'quality_binary': data['quality_binary']
+        } if data is not None else None
+
+        self.width = width
+        self.height = height
+
+        self.normalize = normalize
+
+    def load_image_for_map(self, data_slice):
+        
+        image = self.load_image(data_slice['image_path'])
+        
+        # Return tuple. Because tf.py_tunction not allow using dict
+        return (image, 
+                data_slice['quality_binary'])
+    
+    def map_labels(self, image, quality_binary):
+        image, quality_vector = tf.py_function(
+            self.map_labels_py,
+            (image, quality_binary),
+            (tf.float32, tf.float32)
+        )
+
+        # Set shape for safety
+        image.set_shape([self.height, self.width, 3]) # (height, width, channel) image
+        quality_vector.set_shape([1]) # binary vector
+
+        # packing to dict again
+        return (image, {
+            'quality_prediction': quality_vector
+        })
+
+    def map_labels_py(self, image, quality_binary):
+        
+        # Just cast type to float32
+        quality_vector = np.array([quality_binary]).astype(np.float32)
+
+        return (image, quality_vector)
+
+
 class DatasetWrapperForManualScoreClassification(DatasetWrapper):
     """
     DatasetWrapper class for `manual_score` classification

@@ -127,3 +127,36 @@ def load_score_records(root_path: str, db_path: str, table_name: str="for_scorin
     del df['filename']
 
     return df
+
+def load_quality_binary_records(root_path: str, db_path: str, table_name: str="illusts") -> pd.DataFrame:
+    """
+    Load `quality_binary` column from database
+
+    Used for `total_bookmarks` based Aesthetic pseudo-label generator binary classification 
+
+    Args:
+        root_path: absolute path of root directory of dataset. See 'Dataset Structure' sector of README.md
+        db_path: absolute or relative path of database file.
+    """
+
+    # If `db_path` is relative, then convert it to absolute.
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(root_path, db_path)
+
+    conn = sqlite3.connect(db_path)
+    
+    # Read all record from database by DataFrame
+    df = pd.read_sql_query(f"""
+    SELECT filename, quality_binary
+    FROM {table_name}
+    ORDER BY filename;
+    """, conn)
+
+    # Convert `filename` to `image_path`. 
+    # e.g., "1234567_p0" -> "{root_path}/12/1234567_p0.png"
+    df['image_path'] = df['filename'].apply(lambda x: os.path.join(root_path, x[:2], f"{x}.{IMAGE_EXTENSION}"))
+    
+    # Drop `filename` column 
+    del df['filename']
+
+    return df

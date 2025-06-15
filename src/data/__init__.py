@@ -9,9 +9,11 @@ from .dataset_wrappers import DatasetWrapperForManualScoreClassification
 from .dataset_wrappers import DatasetWrapperForManualScoreClassificationWithMultiTask
 from .dataset_wrappers import DatasetWrapperForManualScoreRegressionWithMultiTask
 from .dataset_wrappers import DatasetWrapperForSanityLevelClassification
+from .dataset_wrappers import DatasetWrapperForAestheticBinaryClassification
 
 from .dataset import load_all_character_tags, load_records, load_all_character_tags_from_json, save_all_character_tags_as_json
 from .dataset import load_score_records
+from .dataset import load_quality_binary_records
 
 from .preprocessing import score_bookmarks_ratio
 from .preprocessing import score_weighted_log_average, score_weighted_log_average_scaled
